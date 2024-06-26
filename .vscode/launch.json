@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug - Test",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/test",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "symbolSearchPath": "${workspaceFolder}/zig-cache/bin",
+            "preLaunchTask": "zig-build-test"
+        },
+        {
+            "name": "Debug (GDB) - Test",
+            "type": "cppdbg",
+            "request": "launch",
+            "MIMode": "gdb",
+            "program": "${workspaceFolder}/zig-out/bin/test",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,   
+            "additionalSOLibSearchPath": "${workspaceFolder}/zig-cache/bin",
+            // "symbolSearchPath": "${workspaceFolder}/zig-cache/bin",
+            "preLaunchTask": "zig-build-test"
+        }
+    ]
+}

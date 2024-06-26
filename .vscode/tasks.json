@@ -1,0 +1,10 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "zig-build-test",
+            "type": "shell",
+            "command": "zig test --test-no-exec -femit-bin=zig-out/bin/test .\\src\\root.zig"
+        }
+    ]
+}
