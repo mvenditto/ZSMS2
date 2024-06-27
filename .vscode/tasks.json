@@ -4,7 +4,7 @@
         {
             "label": "zig-build-test",
             "type": "shell",
-            "command": "zig test --test-no-exec -femit-bin=zig-out/bin/test .\\src\\root.zig"
+            "command": "zig test --test-no-exec -femit-bin=zig-out/bin/test .\\tests\\test.zig"
         }
     ]
 }

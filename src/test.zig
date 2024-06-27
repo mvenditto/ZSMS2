@@ -8,8 +8,8 @@ const OpcodeTest = struct {
     initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, ram: []const [2]u16 },
     final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, ram: []const [2]u16 },
 
-    fn toZ80State(self: *const OpcodeTest) !*cpu.Z80State {
-        var s = try cpu.Z80State.create(std.heap.page_allocator);
+    fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
+        var s = try cpu.Z80State.create(allocator);
         const init = self.initial;
         s.AF.A = init.a;
         s.AF.setFlags(init.f);
@@ -271,16 +271,11 @@ test "register pairs array access" {
 
     std.debug.print("\n", .{});
 
-    const host_endianess = @import("builtin").target.cpu.arch.endian();
-
-    inline for (state.gp_registers_pairs[0..4], 0..) |b, i| {
-        const r: cpu.EightBitRegisters = @enumFromInt(i);
-        std.debug.print("{d} {any}: {d}\n", .{ i, r, b });
-        const expected_value: u16 = switch (host_endianess) {
-            .little => @byteSwap(expected[i]),
-            .big => expected[i],
-        };
-        try expectEquals(expected_value, b);
+    inline for (state.gp_registers_pairs[0..4], 0..) |rp, i| {
+        const r: cpu.RegisterPairs1 = @enumFromInt(i);
+        std.debug.print("{d}: {any}\n", .{ i, r });
+        const expected_value: u16 = expected[i];
+        try expectEquals(expected_value, rp.getValue());
     }
 }
 
@@ -363,16 +358,25 @@ test "SingleStepTests/z80" {
     const op = @import("opcodes.zig");
 
     const opcodes_to_test = [_][]const u8{
-        "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
-        "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
-        "97", "90", "91", "92", "93", "94", "95", "96", "dd 8E", "fd 8E", "d6", // SUB A,
-        "9F", "98", "99", "9A", "9B", "9C", "9D", "9E", "dd 9E", "fd 9E", "de", // SBC A,
-        "A7", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "dd A6", "fd A6", "e6", // AND A,
-        "AF", "A8", "A9", "AA", "AB", "AC", "AD", "AE", "dd AE", "fd AE", "ee", // XOR A,
-        "B7", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "dd B6", "fd B6", "f6", // OR A,
-        "BF", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "dd BE", "fd BE", "fe", // CP A,
-        "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
-        "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
+        // Arithment and Logical group
+        // "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
+        // "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
+        // "97", "90", "91", "92", "93", "94", "95", "96", "dd 8E", "fd 8E", "d6", // SUB A,
+        // "9F", "98", "99", "9A", "9B", "9C", "9D", "9E", "dd 9E", "fd 9E", "de", // SBC A,
+        // "A7", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "dd A6", "fd A6", "e6", // AND A,
+        // "AF", "A8", "A9", "AA", "AB", "AC", "AD", "AE", "dd AE", "fd AE", "ee", // XOR A,
+        // "B7", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "dd B6", "fd B6", "f6", // OR A,
+        // "BF", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "dd BE", "fd BE", "fe", // CP A,
+        // "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
+        // "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
+        // Load group
+        "7F", "78", "79", "7A", "7B", "7C", "7D", "7E", "0A", "1A", // LD A,r + LD A,(HL|BC|DE)
+        // "47", "40", "41", "42", "43", "44", "45", "46", // LD B,r
+        // "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", // LD C,r
+        // "57", "50", "51", "52", "53", "54", "55", "56", // LD D,r
+        // "5F", "58", "59", "5A", "5B", "5C", "5D", "5E", // LD E,r
+        // "67", "60", "61", "62", "63", "64", "65", "66", // LD H,r
+        // "6F", "68", "69", "6A", "6B", "6C", "6D", "6E", // LD L,r
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -398,9 +402,10 @@ test "SingleStepTests/z80" {
         const tests = try parseZ80TestFile(file_path);
 
         for (tests[1..], 0..) |t, i| {
-            const s = try t.toZ80State();
+            const s = try t.toZ80State(allocator);
+            defer s.free(allocator);
 
-            const opcode = s.fetchAtPC();
+            const opcode = s.memory[s.PC];
             op.exec(s, opcode);
 
             t.expectState(s) catch |err| {

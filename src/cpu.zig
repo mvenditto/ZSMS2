@@ -170,31 +170,27 @@ pub const Z80State = packed struct {
     gp_registers: *[16]u8 = undefined,
 
     // indexing over the 8 16-bit registers
-    gp_registers_pairs: *[8]u16 = undefined,
+    gp_registers_pairs: *[4]SixteenBitRegister = undefined,
 
     // memory
     memory: [*]u8 = undefined,
+    memory_len: usize,
 
     const Self = @This();
-
-    pub inline fn fetchAtPC(self: *const Self) u8 {
-        return self.memory[self.PC];
-    }
-
-    pub inline fn fetchAt(self: *const Self, address: u16) u8 {
-        return self.memory[address];
-    }
-
-    pub inline fn fetchRegister8(self: *Self, r: u8) u8 {
-        return self.gp_registers[r];
-    }
 
     pub fn create(allocator: std.mem.Allocator) !*Self {
         var state = try allocator.create(Self);
         state.gp_registers = @ptrCast(state);
         state.gp_registers_pairs = @ptrCast(state);
         const buff = try allocator.alloc(u8, 64 * 1024); // 64KB
+        state.memory_len = buff.len;
         state.memory = buff.ptr;
         return state;
+    }
+
+    pub fn free(self: *Self, allocator: std.mem.Allocator) void {
+        const buff: []u8 = self.memory[0..self.memory_len];
+        allocator.free(buff);
+        allocator.destroy(self);
     }
 };

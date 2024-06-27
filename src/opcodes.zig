@@ -1,6 +1,7 @@
 const std = @import("std");
 const processor = @import("cpu.zig");
 const Z80State = processor.Z80State;
+const RegisterPairs = processor.RegisterPairs1;
 
 // Z80 instructions are represented in memory as byte sequences of the form (items in brackets are optional):
 // [prefix byte,]  opcode  [,displacement byte]  [,immediate data]
@@ -62,31 +63,31 @@ fn hasEvenParity8(x: u8) bool {
     return p & 1 == 0; // 0 = even
 }
 
-pub inline fn fetchRegister(state: *Z80State, r: u8) u8 {
+pub inline fn readRegister(state: *Z80State, r: u8) u8 {
     state.PC +%= 1;
-    const value = state.fetchRegister8(r);
+    const value = state.gp_registers[r];
     return value;
 }
 
-pub inline fn fetchImmediate(state: *Z80State) u8 {
+pub inline fn readImmediate(state: *Z80State) u8 {
     state.PC +%= 2;
-    const value = state.fetchAt(state.PC -% 1);
+    const value = state.memory[state.PC -% 1];
     return value;
 }
 
-pub inline fn fetchIndirect(state: *Z80State) u8 {
+pub inline fn readIndirect(state: *Z80State, rp: u8) u8 {
     state.PC +%= 1;
-    const address = state.HL.getValue();
-    const value = state.fetchAt(address);
+    const address = state.gp_registers_pairs[rp].getValue();
+    const value = state.memory[address];
     return value;
 }
 
-pub inline fn fetchIndexed(state: *Z80State) u8 {
+pub inline fn readIndexed(state: *Z80State) u8 {
     state.PC +%= 3;
     const base_address: i32 = @intCast(state.addr_register.getValue());
     const d: i8 = @bitCast(state.memory[state.PC -% 1]); // displacement is two's complement
     const address: u16 = @intCast(@mod(base_address + d, 65536));
-    const value = state.fetchAt(address);
+    const value = state.memory[address];
     return value;
 }
 
@@ -94,8 +95,9 @@ pub inline fn storeRegister(state: *Z80State, r: u8, value: u8) void {
     state.gp_registers[r] = value;
 }
 
-pub inline fn storeIndirect(state: *Z80State, value: u8) void {
-    state.memory[state.HL.getValue()] = value;
+pub inline fn storeIndirect(state: *Z80State, value: u8, rp: u8) void {
+    const address = state.gp_registers_pairs[rp].getValue();
+    state.memory[address] = value;
 }
 
 pub inline fn storeIndexed(state: *Z80State, value: u8) void {
@@ -162,18 +164,18 @@ pub inline fn sbc_a_x(s: *Z80State, rhs: u8) void {
 
 pub inline fn btw_a_x(comptime OP: BitwiseOp, s: *Z80State, rhs: u8) void {
     const t = switch (OP) {
-        .AND => s.AF.A & rhs,
-        .XOR => s.AF.A ^ rhs,
-        .OR => s.AF.A | rhs,
+        inline .AND => s.AF.A & rhs,
+        inline .XOR => s.AF.A ^ rhs,
+        inline .OR => s.AF.A | rhs,
     };
     s.AF.A = t;
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.Z = t == 0;
     s.AF.F.N = false;
     s.AF.F.H = switch (OP) {
-        .AND => true,
-        .XOR => false,
-        .OR => false,
+        inline .AND => true,
+        inline .XOR => false,
+        inline .OR => false,
     };
     s.AF.F.C = false;
     s.AF.F.PV = hasEvenParity8(t);
@@ -222,10 +224,10 @@ pub fn inc_dec_x(s: *Z80State, opcode: *const OpCode, value: u8) u8 {
 
 pub inline fn alu(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) void {
     const rhs = switch (addressing) {
-        .register => fetchRegister(state, opcode.z),
-        .immediate => fetchImmediate(state),
-        .indexed => fetchIndexed(state),
-        .indirect => fetchIndirect(state),
+        inline .register => readRegister(state, opcode.z),
+        inline .immediate => readImmediate(state),
+        inline .indexed => readIndexed(state),
+        inline .indirect => readIndirect(state, @intFromEnum(RegisterPairs.HL)),
     };
 
     switch (opcode.y) {
@@ -240,11 +242,11 @@ pub inline fn alu(comptime addressing: AddressingMode, state: *Z80State, opcode:
     }
 }
 
-pub fn alu2(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) void {
+pub inline fn alu2(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) void {
     const value = switch (addressing) {
-        .register => fetchRegister(state, opcode.y),
-        .indirect => fetchIndirect(state),
-        .indexed => fetchIndexed(state),
+        inline .register => readRegister(state, opcode.y),
+        inline .indirect => readIndirect(state, @intFromEnum(RegisterPairs.HL)),
+        inline .indexed => readIndexed(state),
         else => std.debug.panic("Unsupported addressing {any} for instruction: 0x{x}\n", .{ addressing, opcode }),
     };
 
@@ -252,44 +254,44 @@ pub fn alu2(comptime addressing: AddressingMode, state: *Z80State, opcode: *cons
 
     switch (addressing) {
         .register => storeRegister(state, opcode.y, result),
-        .indirect => storeIndirect(state, result),
+        .indirect => storeIndirect(state, result, @intFromEnum(RegisterPairs.HL)),
         .indexed => storeIndexed(state, result),
         else => std.debug.panic("Unsupported addressing {any} for instruction: 0x{x}\n", .{ addressing, opcode }),
     }
 }
 
 pub fn alu2_r(state: *Z80State, opcode: *const OpCode) void {
-    alu2(AddressingMode.register, state, opcode);
+    alu2(.register, state, opcode);
 }
 
 pub fn alu2_hl(state: *Z80State, opcode: *const OpCode) void {
-    alu2(AddressingMode.indirect, state, opcode);
+    alu2(.indirect, state, opcode);
 }
 
 pub fn alu2_xy(state: *Z80State, opcode: *const OpCode) void {
-    alu2(AddressingMode.indexed, state, opcode);
+    alu2(.indexed, state, opcode);
 }
 
 pub fn alu_r(state: *Z80State, opcode: *const OpCode) void {
-    alu(AddressingMode.register, state, opcode);
+    alu(.register, state, opcode);
 }
 
 pub fn alu_hl(state: *Z80State, opcode: *const OpCode) void {
-    alu(AddressingMode.indirect, state, opcode);
+    alu(.indirect, state, opcode);
 }
 
 pub fn alu_xy(state: *Z80State, opcode: *const OpCode) void {
-    alu(AddressingMode.indexed, state, opcode);
+    alu(.indexed, state, opcode);
 }
 
 pub fn alu_n(state: *Z80State, opcode: *const OpCode) void {
-    alu(AddressingMode.immediate, state, opcode);
+    alu(.immediate, state, opcode);
 }
 
 pub fn ij_prefix(state: *Z80State, _: *const OpCode) void {
     state.R +%= 1;
     const address = state.PC +% 1;
-    const opcode_int = state.fetchAt(address);
+    const opcode_int = state.memory[address];
     const opcode: OpCode = @bitCast(opcode_int);
     const insn_func = xy_instructions_table[opcode_int];
     insn_func(state, &opcode);
@@ -305,16 +307,42 @@ pub fn fd_prefix(state: *Z80State, opcode: *const OpCode) void {
     ij_prefix(state, opcode);
 }
 
+pub fn load(state: *Z80State, opcode: *const OpCode) void {
+    switch (opcode.x) {
+        1 => ld_r_r(state, opcode), // LD r,r'
+        else => std.debug.panic("Unsupported Opcode 0x{x}\n", .{@as(u8, @bitCast(opcode.*))}),
+    }
+}
+
+pub inline fn ld_r_r(state: *Z80State, opcode: *const OpCode) void {
+    state.PC +%= 1;
+    state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
+}
+
+pub fn ld_r_hl(state: *Z80State, opcode: *const OpCode) void {
+    state.gp_registers[opcode.y] = readIndirect(state, @intFromEnum(RegisterPairs.HL));
+}
+
+pub fn ld_a_bc(state: *Z80State, _: *const OpCode) void {
+    const dst = @intFromEnum(processor.EightBitRegisters.A);
+    state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.BC));
+}
+
+pub fn ld_a_de(state: *Z80State, _: *const OpCode) void {
+    const dst = @intFromEnum(processor.EightBitRegisters.A);
+    state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.DE));
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, // 0
-    undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, // 1
+    undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, ld_a_bc, undefined, alu2_r, alu2_r, undefined, undefined, // 0
+    undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, ld_a_de, undefined, alu2_r, alu2_r, undefined, undefined, // 1
     undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, // 2
     undefined, undefined, undefined, undefined, alu2_hl, alu2_hl, undefined, undefined, undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, // 3
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 4
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 5
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 6
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
+    load, load, load, load, load, load, ld_r_hl, load, load, load, load, load, load, load, ld_r_hl, load, // 4
+    load, load, load, load, load, load, ld_r_hl, load, load, load, load, load, load, load, ld_r_hl, load, // 5
+    load, load, load, load, load, load, ld_r_hl, load, load, load, load, load, load, load, ld_r_hl, load, // 6
+    load, load, load, load, load, load, ld_r_hl, load, load, load, load, load, load, load, ld_r_hl, load, // 7
     alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, // 8
     alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, // 9
     alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_r, alu_hl, alu_r, // A
