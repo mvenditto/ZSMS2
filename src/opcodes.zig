@@ -333,6 +333,10 @@ pub fn ld_a_de(state: *Z80State, _: *const OpCode) void {
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.DE));
 }
 
+pub fn ld_r_xy(state: *Z80State, opcode: *const OpCode) void {
+    state.gp_registers[opcode.y] = readIndexed(state);
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
     undefined, undefined, undefined, undefined, alu2_r, alu2_r, undefined, undefined, undefined, undefined, ld_a_bc, undefined, alu2_r, alu2_r, undefined, undefined, // 0
@@ -363,7 +367,7 @@ const xy_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 4
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 5
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 6
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, // 7
     undefined, undefined, undefined, undefined, undefined, undefined, alu_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, alu_xy, undefined, // 8
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, alu_xy, undefined, // 9
     undefined, undefined, undefined, undefined, undefined, undefined, alu_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, alu_xy, undefined, // A
