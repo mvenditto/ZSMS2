@@ -317,7 +317,6 @@ pub fn al_a_n(state: *Z80State, opcode: *const OpCode) void {
 }
 
 pub fn ij_prefix(state: *Z80State, _: *const OpCode) void {
-    state.R.increment();
     state.PC +%= 1;
     const opcode_int = fetchOpcode(state);
     const opcode: OpCode = @bitCast(opcode_int);

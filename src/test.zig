@@ -62,7 +62,7 @@ const OpcodeTest = struct {
         try expectEquals(final.iy, s.IY.getValue());
         try expectEquals(final.iff1 == 1, s.IFF1);
         try expectEquals(final.iff2 == 1, s.IFF2);
-        // try expectEquals(final.r, s.R);
+        try expectEquals(final.r, s.R.getValue());
 
         for (final.ram) |loc| {
             const address: u16 = @truncate(loc[0]);
