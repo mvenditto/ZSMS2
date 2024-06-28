@@ -163,6 +163,30 @@ test "Flags register set/get" {
     }
 }
 
+test "16 bit register inc/dec" {
+    var r = cpu.SixteenBitRegister{
+        .high = 222,
+        .low = 233,
+    };
+
+    const exp = r.getValue() +% 1;
+
+    r.increment();
+
+    try expectEquals(exp, r.getValue());
+
+    var r2 = cpu.SixteenBitRegister{
+        .high = 222,
+        .low = 233,
+    };
+
+    const exp2 = r2.getValue() -% 1;
+
+    r2.decrement();
+
+    try expectEquals(exp2, r2.getValue());
+}
+
 test "16 bit register" {
     var r = cpu.SixteenBitRegister{
         .high = 0,
@@ -392,6 +416,8 @@ test "SingleStepTests/z80" {
         "77", "70", "71", "72", "73", "74", "75", "36", // LD (HL),r
         "02", "12", // LD (BC|DE),A
         "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
+        // Block Transfer Group
+        "ED A0", "ED B0", "ED A8", "ED B8", // LDI,LDIR,LDIR,LDDR
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

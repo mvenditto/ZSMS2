@@ -6,30 +6,27 @@ pub const SixteenBitRegister = packed struct {
     low: u8 = 0, // 8-15
 
     pub inline fn getValue(self: *const SixteenBitRegister) u16 {
-        // return switch (host_endianess) {
-        //     .little => @bitCast(self.*),
-        //     .big => {
-        //         const integer: u16 = @bitCast(self.*);
-        //         return @byteSwap(integer);
-        //     },
-        // };
         return @intCast(self.low | @as(u16, self.high) << 8);
     }
 
-    pub fn setValue(self: *SixteenBitRegister, value: u16) void {
-        // self.* = switch (host_endianess) {
-        //     .little => @bitCast(value),
-        //     .big => @bitCast(@byteSwap(value)),
-        // };
+    pub inline fn setValue(self: *SixteenBitRegister, value: u16) void {
         self.low = @truncate(value & 0xFF);
         self.high = @truncate((value >> 8) & 0xFF);
     }
 
-    pub fn setLow(self: *SixteenBitRegister, value: u8) void {
+    pub inline fn increment(self: *SixteenBitRegister) void {
+        self.setValue(self.getValue() +% 1);
+    }
+
+    pub inline fn decrement(self: *SixteenBitRegister) void {
+        self.setValue(self.getValue() -% 1);
+    }
+
+    pub inline fn setLow(self: *SixteenBitRegister, value: u8) void {
         self.low = value;
     }
 
-    pub fn setHigh(self: *SixteenBitRegister, value: u8) void {
+    pub inline fn setHigh(self: *SixteenBitRegister, value: u8) void {
         self.high = value;
     }
 
