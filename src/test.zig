@@ -3,11 +3,16 @@ const cpu = @import("cpu.zig");
 const expect = std.testing.expect;
 const expectEquals = std.testing.expectEqual;
 
+const CycleSample = struct {
+    addr_pins: ?u32 = null,
+    data_pins: ?u32 = null,
+};
+
 const OpcodeTest = struct {
     name: []const u8,
     initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
     final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
-
+    cycles: []const [3]std.json.Value,
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
         var s = try cpu.Z80State.create(allocator);
         const init = self.initial;
@@ -63,6 +68,7 @@ const OpcodeTest = struct {
         try expectEquals(final.iff1 == 1, s.IFF1);
         try expectEquals(final.iff2 == 1, s.IFF2);
         try expectEquals(final.r, s.R.getValue());
+        try expectEquals(self.cycles.len, s.cycles);
 
         for (final.ram) |loc| {
             const address: u16 = @truncate(loc[0]);

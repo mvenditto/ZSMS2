@@ -203,6 +203,9 @@ pub const Z80State = packed struct {
     memory: [*]u8 = undefined,
     memory_len: usize,
 
+    // cycles
+    cycles: usize = 0,
+
     const Self = @This();
 
     pub fn create(allocator: std.mem.Allocator) !*Self {
@@ -212,6 +215,7 @@ pub const Z80State = packed struct {
         const buff = try allocator.alloc(u8, 64 * 1024); // 64KB
         state.memory_len = buff.len;
         state.memory = buff.ptr;
+        state.cycles = 0;
         return state;
     }
 

@@ -41,7 +41,7 @@ const HF = 16;
 const XF = 8;
 const PVF = 4;
 
-const InstructionFn = *const fn (*Z80State, *const OpCode) void;
+const InstructionFn = *const fn (*Z80State, *const OpCode) u8;
 
 const AddressingMode = enum {
     register, // r
@@ -234,7 +234,7 @@ pub fn inc_dec_x(s: *Z80State, opcode: *const OpCode, value: u8) u8 {
     return t;
 }
 
-pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) void {
+pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) u8 {
     const rhs = switch (addressing) {
         inline .register => readRegister(state, opcode.z),
         inline .immediate => readImmediate(state, 1),
@@ -261,9 +261,16 @@ pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opco
         6 => or_a_x(state, rhs), //   OR A,
         7 => cp_a_x(state, rhs), //   CP A,
     }
+
+    return switch (addressing) {
+        inline .immediate => 7,
+        inline .indirect => 7,
+        inline .indexed => 19,
+        else => 4,
+    };
 }
 
-pub inline fn al2_a_x(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) void {
+pub inline fn al2_a_x(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) u8 {
     const value = switch (addressing) {
         inline .register => readRegister(state, opcode.y),
         inline .indirect => readIndirect(state, @intFromEnum(RegisterPairs.HL)),
@@ -286,105 +293,120 @@ pub inline fn al2_a_x(comptime addressing: AddressingMode, state: *Z80State, opc
     }
 
     state.PC +%= 1 + operand_size;
+
+    return switch (addressing) {
+        inline .immediate => 7,
+        inline .indirect => 11,
+        inline .indexed => 23,
+        else => 4,
+    };
 }
 
-pub fn al2_a_r(state: *Z80State, opcode: *const OpCode) void {
-    al2_a_x(.register, state, opcode);
+pub fn al2_a_r(state: *Z80State, opcode: *const OpCode) u8 {
+    return al2_a_x(.register, state, opcode);
 }
 
-pub fn al2_a_hl(state: *Z80State, opcode: *const OpCode) void {
-    al2_a_x(.indirect, state, opcode);
+pub fn al2_a_hl(state: *Z80State, opcode: *const OpCode) u8 {
+    return al2_a_x(.indirect, state, opcode);
 }
 
-pub fn al2_a_xy(state: *Z80State, opcode: *const OpCode) void {
-    al2_a_x(.indexed, state, opcode);
+pub fn al2_a_xy(state: *Z80State, opcode: *const OpCode) u8 {
+    return al2_a_x(.indexed, state, opcode);
 }
 
-pub fn al_a_r(state: *Z80State, opcode: *const OpCode) void {
-    al_a_x(.register, state, opcode);
+pub fn al_a_r(state: *Z80State, opcode: *const OpCode) u8 {
+    return al_a_x(.register, state, opcode);
 }
 
-pub fn al_a_hl(state: *Z80State, opcode: *const OpCode) void {
-    al_a_x(.indirect, state, opcode);
+pub fn al_a_hl(state: *Z80State, opcode: *const OpCode) u8 {
+    return al_a_x(.indirect, state, opcode);
 }
 
-pub fn al_a_xy(state: *Z80State, opcode: *const OpCode) void {
-    al_a_x(.indexed, state, opcode);
+pub fn al_a_xy(state: *Z80State, opcode: *const OpCode) u8 {
+    return al_a_x(.indexed, state, opcode);
 }
 
-pub fn al_a_n(state: *Z80State, opcode: *const OpCode) void {
-    al_a_x(.immediate, state, opcode);
+pub fn al_a_n(state: *Z80State, opcode: *const OpCode) u8 {
+    return al_a_x(.immediate, state, opcode);
 }
 
-pub fn ij_prefix(state: *Z80State, _: *const OpCode) void {
+pub fn ij_prefix(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     const opcode_int = fetchOpcode(state);
     const opcode: OpCode = @bitCast(opcode_int);
     const insn_func = xy_instructions_table[opcode_int];
-    insn_func(state, &opcode);
+    return insn_func(state, &opcode);
 }
 
-pub fn dd_prefix(state: *Z80State, opcode: *const OpCode) void {
+pub fn dd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IX;
-    ij_prefix(state, opcode);
+    return ij_prefix(state, opcode);
 }
 
-pub fn fd_prefix(state: *Z80State, opcode: *const OpCode) void {
+pub fn fd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IY;
-    ij_prefix(state, opcode);
+    return ij_prefix(state, opcode);
 }
 
-pub fn ed_prefix(state: *Z80State, _: *const OpCode) void {
+pub fn ed_prefix(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     const opcode_int = fetchOpcode(state);
     const opcode: OpCode = @bitCast(opcode_int);
     const insn_func = ed_instructions_table[opcode_int];
-    insn_func(state, &opcode);
+    return insn_func(state, &opcode);
 }
 
-pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
     state.PC +%= 1;
+    return 4;
 }
 
-pub fn ld_r_n(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_r_n(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readImmediate(state, 1);
     state.PC +%= 2;
+    return 7;
 }
 
-pub fn ld_r_hl(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_r_hl(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readIndirect(state, @intFromEnum(RegisterPairs.HL));
     state.PC +%= 1;
+    return 7;
 }
 
-pub fn ld_a_bc(state: *Z80State, _: *const OpCode) void {
+pub fn ld_a_bc(state: *Z80State, _: *const OpCode) u8 {
     const dst = @intFromEnum(processor.EightBitRegisters.A);
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.BC));
     state.PC +%= 1;
+    return 7;
 }
 
-pub fn ld_a_de(state: *Z80State, _: *const OpCode) void {
+pub fn ld_a_de(state: *Z80State, _: *const OpCode) u8 {
     const dst = @intFromEnum(processor.EightBitRegisters.A);
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.DE));
     state.PC +%= 1;
+    return 7;
 }
 
-pub fn ld_r_xy(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_r_xy(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readIndexed(state, 1);
     state.PC +%= 2;
+    return 19;
 }
 
-pub fn ld_a_nn(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_a_nn(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readExtended(state, 1);
     state.PC +%= 3;
+    return 13;
 }
 
-pub fn ld_nn_a(state: *Z80State, _: *const OpCode) void {
+pub fn ld_nn_a(state: *Z80State, _: *const OpCode) u8 {
     storeExtended(state, state.AF.A, 1);
     state.PC +%= 3;
+    return 13;
 }
 
-pub fn ld_a_i(state: *Z80State, _: *const OpCode) void {
+pub fn ld_a_i(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.AF.A = state.I;
     state.AF.F.S = state.I & SF != 0;
@@ -394,9 +416,10 @@ pub fn ld_a_i(state: *Z80State, _: *const OpCode) void {
     state.AF.F.N = false;
     state.AF.F.X = state.I & XF != 0; // 3rd bit
     state.AF.F.Y = state.I & YF != 0; // 5th bit
+    return 9;
 }
 
-pub fn ld_a_r(state: *Z80State, _: *const OpCode) void {
+pub fn ld_a_r(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     const r = state.R.getValue();
     state.AF.A = r;
@@ -407,47 +430,56 @@ pub fn ld_a_r(state: *Z80State, _: *const OpCode) void {
     state.AF.F.N = false;
     state.AF.F.X = r & XF != 0; // 3rd bit
     state.AF.F.Y = r & YF != 0; // 5th bit
+    return 9;
 }
 
-pub fn ld_i_a(state: *Z80State, _: *const OpCode) void {
+pub fn ld_i_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.I = state.AF.A;
+    return 9;
 }
 
-pub fn ld_r_a(state: *Z80State, _: *const OpCode) void {
+pub fn ld_r_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.R.setValue(state.AF.A);
+    return 9;
 }
 
-pub fn ld_hl_r(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_hl_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
     state.memory[state.HL.getValue()] = state.gp_registers[opcode.z];
+    return 7;
 }
 
-pub fn ld_hl_n(state: *Z80State, _: *const OpCode) void {
+pub fn ld_hl_n(state: *Z80State, _: *const OpCode) u8 {
     state.memory[state.HL.getValue()] = readImmediate(state, 1);
     state.PC +%= 2;
+    return 10;
 }
 
-pub fn ld_bc_a(state: *Z80State, _: *const OpCode) void {
+pub fn ld_bc_a(state: *Z80State, _: *const OpCode) u8 {
     state.memory[state.BC.getValue()] = state.AF.A;
     state.PC +%= 1;
+    return 7;
 }
 
-pub fn ld_de_a(state: *Z80State, _: *const OpCode) void {
+pub fn ld_de_a(state: *Z80State, _: *const OpCode) u8 {
     state.memory[state.DE.getValue()] = state.AF.A;
     state.PC +%= 1;
+    return 7;
 }
 
-pub fn ld_xy_r(state: *Z80State, opcode: *const OpCode) void {
+pub fn ld_xy_r(state: *Z80State, opcode: *const OpCode) u8 {
     storeIndexed(state, readRegister(state, opcode.z), 1);
     state.PC +%= 2;
+    return 19;
 }
 
-pub fn ld_xy_n(state: *Z80State, _: *const OpCode) void {
+pub fn ld_xy_n(state: *Z80State, _: *const OpCode) u8 {
     const value = readImmediate(state, 2);
     storeIndexed(state, value, 1);
     state.PC +%= 3;
+    return 19;
 }
 
 const instructions_table = [256]InstructionFn{
@@ -521,5 +553,6 @@ pub inline fn fetchOpcode(state: *Z80State) u8 {
 pub fn exec(state: *Z80State, opcode: u8) void {
     const decoded: *const OpCode = @ptrCast(&opcode);
     const insn_func = instructions_table[opcode];
-    insn_func(state, decoded);
+    const insn_cycles = insn_func(state, decoded);
+    state.cycles +%= insn_cycles;
 }
