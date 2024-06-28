@@ -112,6 +112,13 @@ pub inline fn storeIndexed(state: *Z80State, value: u8, comptime offset: u8) voi
     state.memory[address] = value;
 }
 
+pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) void {
+    const low = state.memory[state.PC + offset];
+    const high = state.memory[state.PC + offset + 1];
+    const address: u16 = @intCast(low | @as(u16, high) << 8);
+    state.memory[address] = value;
+}
+
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
     const t = s.AF.A +% rhs; // +% = wrapping addition
     s.AF.F.N = false;
@@ -373,6 +380,11 @@ pub fn ld_a_nn(state: *Z80State, opcode: *const OpCode) void {
     state.PC +%= 3;
 }
 
+pub fn ld_nn_a(state: *Z80State, _: *const OpCode) void {
+    storeExtended(state, state.AF.A, 1);
+    state.PC +%= 3;
+}
+
 pub fn ld_a_i(state: *Z80State, _: *const OpCode) void {
     state.PC +%= 1;
     state.AF.A = state.I;
@@ -444,7 +456,7 @@ const instructions_table = [256]InstructionFn{
     undefined, undefined, ld_bc_a, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, ld_a_bc, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 0
     undefined, undefined, ld_de_a, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, ld_a_de, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 1
     undefined, undefined, undefined, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, undefined, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
-    undefined, undefined, undefined, undefined, al2_a_hl, al2_a_hl, ld_hl_n, undefined, undefined, undefined, ld_a_nn, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
+    undefined, undefined, ld_nn_a, undefined, al2_a_hl, al2_a_hl, ld_hl_n, undefined, undefined, undefined, ld_a_nn, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 4
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 5
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 6
