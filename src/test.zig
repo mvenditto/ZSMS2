@@ -76,10 +76,6 @@ const OpcodeTest = struct {
             const value: u8 = @truncate(loc[1]);
             try expectEquals(value, s.memory[address]);
         }
-
-        for (self.cycles) |cycle| {
-            const exp_addr_bus: u16 = @truncate(cycle[0].integer);
-        }
     }
 };
 
