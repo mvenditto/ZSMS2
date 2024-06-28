@@ -143,6 +143,29 @@ pub const RegisterPairs2 = enum(u8) {
     AF = 3,
 };
 
+// see: http://www.z80.info/z80_faq.htm#Q-1
+pub const MemoryRefreshRegister = packed struct(u8) {
+    refresh_counter: u7 = 0, // 7-bits refresh counter, incremented on every fetch.
+    R7: u1 = 0, // 8th bit, remains as programmed from an LD R, A instruction.
+
+    const Self = @This();
+
+    /// Returns the full 8-bit value of the whole R register.
+    pub inline fn getValue(self: *const Self) u8 {
+        return @bitCast(self.*);
+    }
+
+    pub inline fn setValue(self: *Self, value: u8) void {
+        self.* = @bitCast(value);
+    }
+
+    /// Increments the 7-bits memory refresh counter.
+    /// Does not affect R7.
+    pub inline fn increment(self: *Self) void {
+        self.refresh_counter +%= 1;
+    }
+};
+
 pub const Z80State = packed struct {
     // General-purpose registers
     BC: SixteenBitRegister = .{},
@@ -161,8 +184,12 @@ pub const Z80State = packed struct {
     PC: u16 = 0, // program counter
     IX: SixteenBitRegister = .{}, // index register x
     IY: SixteenBitRegister = .{}, // index register y
+    R: MemoryRefreshRegister = .{}, // memory refresh
     I: u8 = 0, // interrupt page address (high-order byte)
-    R: u8 = 0, // memory refresh
+
+    // Interrupt Enable Flip-Flops
+    IFF1: bool = false, // Disables interrupts from being accepted
+    IFF2: bool = false, // Temporary storage location for IFF1
 
     addr_register: *SixteenBitRegister = undefined,
 

@@ -5,8 +5,8 @@ const expectEquals = std.testing.expectEqual;
 
 const OpcodeTest = struct {
     name: []const u8,
-    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, ram: []const [2]u16 },
-    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, ram: []const [2]u16 },
+    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
+    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
 
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
         var s = try cpu.Z80State.create(allocator);
@@ -24,7 +24,9 @@ const OpcodeTest = struct {
         s.I = init.i;
         s.IX.setValue(init.ix);
         s.IY.setValue(init.iy);
-        s.R = init.r;
+        s.R.setValue(init.r);
+        s.IFF1 = init.iff1 == 1;
+        s.IFF2 = init.iff2 == 1;
 
         for (init.ram) |loc| {
             s.memory[loc[0]] = @truncate(loc[1]);
@@ -58,6 +60,8 @@ const OpcodeTest = struct {
         try expectEquals(final.i, s.I);
         try expectEquals(final.ix, s.IX.getValue());
         try expectEquals(final.iy, s.IY.getValue());
+        try expectEquals(final.iff1 == 1, s.IFF1);
+        try expectEquals(final.iff2 == 1, s.IFF2);
         // try expectEquals(final.r, s.R);
 
         for (final.ram) |loc| {
@@ -324,7 +328,7 @@ fn parseZ80TestFile(file_path: []const u8) ![]OpcodeTest {
         },
     );
 
-    const json = try file.readToEndAlloc(std.heap.page_allocator, 2_000_000);
+    const json = try file.readToEndAlloc(std.heap.page_allocator, 10_000_000);
 
     const parsed = try std.json.parseFromSlice(
         []OpcodeTest,
@@ -370,13 +374,17 @@ test "SingleStepTests/z80" {
         "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
         "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
         // Load group
-        "7F", "78", "79", "7A", "7B", "7C", "7D", "7E", "0A", "1A", "dd 7e", "fd 7e", // LD A,r + LD A,(HL|BC|DE)
-        "47", "40", "41", "42", "43", "44", "45", "46", // LD B,r
-        "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", // LD C,r
-        "57", "50", "51", "52", "53", "54", "55", "56", // LD D,r
-        "5F", "58", "59", "5A", "5B", "5C", "5D", "5E", // LD E,r
-        "67", "60", "61", "62", "63", "64", "65", "66", // LD H,r
-        "6F", "68", "69", "6A", "6B", "6C", "6D", "6E", // LD L,r
+        "ed 57", "ed 5F", "7F", "78", "79", "7A", "7B", "dd 7e", "fd 7e", "7C", "7D", "7E", "0A", "1A", "3A", "3E", // LD A,r + LD A,(HL|BC|DE)
+        "47", "40", "41", "42", "43", "44", "45", "46", "dd 46", "fd 46", "06", // LD B,r
+        "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", "dd 4e", "fd 4e", "0e", // LD C,r
+        "57", "50", "51", "52", "53", "54", "55", "56", "dd 56", "fd 56", "16", // LD D,r
+        "5F", "58", "59", "5A", "5B", "5C", "5D", "5E", "dd 5e", "fd 5e", "1e", // LD E,r
+        "67", "60", "61", "62", "63", "64", "65", "66", "dd 66", "fd 66", "26", // LD H,r
+        "6F", "68", "69", "6A", "6B", "6C", "6D", "6E", "dd 6e", "fd 6e", "2e", // LD L,r
+        "ed 47", "ed 4f", // LD I,A - LD R,A
+        "77", "70", "71", "72", "73", "74", "75", "36", // LD (HL),r
+        "02", "12", // LD (BC|DE),A
+        "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -405,7 +413,7 @@ test "SingleStepTests/z80" {
             const s = try t.toZ80State(allocator);
             defer s.free(allocator);
 
-            const opcode = s.memory[s.PC];
+            const opcode = op.fetchOpcode(s);
             op.exec(s, opcode);
 
             t.expectState(s) catch |err| {
