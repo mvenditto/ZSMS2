@@ -4,8 +4,9 @@ const expect = std.testing.expect;
 const expectEquals = std.testing.expectEqual;
 
 const CycleSample = struct {
-    addr_pins: ?u32 = null,
-    data_pins: ?u32 = null,
+    addr_pins: ?u16 = null,
+    data_pins: ?u8 = null,
+    reqs_pins: [4]u8 = [4]u8{ "-", "-", "-", "-" },
 };
 
 const OpcodeTest = struct {
@@ -74,6 +75,10 @@ const OpcodeTest = struct {
             const address: u16 = @truncate(loc[0]);
             const value: u8 = @truncate(loc[1]);
             try expectEquals(value, s.memory[address]);
+        }
+
+        for (self.cycles) |cycle| {
+            const exp_addr_bus: u16 = @truncate(cycle[0].integer);
         }
     }
 };
