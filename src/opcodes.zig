@@ -556,7 +556,7 @@ pub fn bt_lddr(state: *Z80State, opcode: *const OpCode) u8 {
 }
 
 // see: http://www.z80.info/zip/z80-documented.pdf chapter 4.2
-pub inline fn bt_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOperation) struct { u8, u16 } {
+pub inline fn bs_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOperation) struct { u8, u16 } {
     const hl = @intFromEnum(RegisterPairs.HL);
 
     const n = readIndirect(state, hl);
@@ -587,20 +587,20 @@ pub inline fn bt_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOpe
     return .{ t0, bc };
 }
 
-pub fn bt_cpi(state: *Z80State, opcode: *const OpCode) u8 {
+pub fn bs_cpi(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
-    _ = bt_cp_x(state, opcode, .increment);
+    _ = bs_cp_x(state, opcode, .increment);
     return 16;
 }
 
-pub fn bt_cpd(state: *Z80State, opcode: *const OpCode) u8 {
+pub fn bs_cpd(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
-    _ = bt_cp_x(state, opcode, .decrement);
+    _ = bs_cp_x(state, opcode, .decrement);
     return 16;
 }
 
-pub inline fn bt_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: IncDecOperation) u8 {
-    const r = bt_cp_x(state, opcode, op);
+pub inline fn bs_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: IncDecOperation) u8 {
+    const r = bs_cp_x(state, opcode, op);
     const t0 = r[0];
     const bc = r[1];
 
@@ -616,12 +616,12 @@ pub inline fn bt_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: Inc
     return 16;
 }
 
-pub fn bt_cpir(state: *Z80State, opcode: *const OpCode) u8 {
-    return bt_cpr_x(state, opcode, .increment);
+pub fn bs_cpir(state: *Z80State, opcode: *const OpCode) u8 {
+    return bs_cpr_x(state, opcode, .increment);
 }
 
-pub fn bt_cpdr(state: *Z80State, opcode: *const OpCode) u8 {
-    return bt_cpr_x(state, opcode, .decrement);
+pub fn bs_cpdr(state: *Z80State, opcode: *const OpCode) u8 {
+    return bs_cpr_x(state, opcode, .decrement);
 }
 
 const instructions_table = [256]InstructionFn{
@@ -678,8 +678,8 @@ const ed_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 8
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
-    bt_ldi, bt_cpi, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, bt_cpd, undefined, undefined, undefined, undefined, undefined, undefined, // A
-    bt_ldir, bt_cpir, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, bt_cpdr, undefined, undefined, undefined, undefined, undefined, undefined, // B
+    bt_ldi, bs_cpi, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, bs_cpd, undefined, undefined, undefined, undefined, undefined, undefined, // A
+    bt_ldir, bs_cpir, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, bs_cpdr, undefined, undefined, undefined, undefined, undefined, undefined, // B
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E

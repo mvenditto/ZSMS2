@@ -418,7 +418,9 @@ test "SingleStepTests/z80" {
         "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
         // Block Transfer Group
         "ED A0", "ED B0", "ED A8", "ED B8", // LDI,LDIR,LDIR,LDDR
+        // Block Search Group
         "ED A1", "ED B1", "ED A9", "ED B9", // CPI,CPIR,CPIR,CPDR
+        // Block Exchange Group
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
