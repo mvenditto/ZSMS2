@@ -482,13 +482,13 @@ pub fn ld_xy_n(state: *Z80State, _: *const OpCode) u8 {
     return 19;
 }
 
-pub const LDOperation = enum {
+pub const IncDecOperation = enum {
     increment,
     decrement,
 };
 
 // see: http://www.z80.info/zip/z80-documented.pdf chapter 4.2
-pub inline fn bt_ld_x(state: *Z80State, _: *const OpCode, comptime op: LDOperation) u8 {
+pub inline fn bt_ld_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOperation) u8 {
     const src = @intFromEnum(RegisterPairs.HL);
     const dst = @intFromEnum(RegisterPairs.DE);
 
@@ -522,7 +522,7 @@ pub inline fn bt_ld_x(state: *Z80State, _: *const OpCode, comptime op: LDOperati
     return 16;
 }
 
-pub inline fn bt_ldr_x(state: *Z80State, opcode: *const OpCode, comptime op: LDOperation) u8 {
+pub inline fn bt_ldr_x(state: *Z80State, opcode: *const OpCode, comptime op: IncDecOperation) u8 {
     const cycles = bt_ld_x(state, opcode, op);
 
     if (state.BC.getValue() != 0) {
@@ -553,6 +553,75 @@ pub fn bt_ldir(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn bt_lddr(state: *Z80State, opcode: *const OpCode) u8 {
     return bt_ldr_x(state, opcode, .decrement);
+}
+
+// see: http://www.z80.info/zip/z80-documented.pdf chapter 4.2
+pub inline fn bt_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOperation) struct { u8, u16 } {
+    const hl = @intFromEnum(RegisterPairs.HL);
+
+    const n = readIndirect(state, hl);
+    const t0 = state.AF.A -% n;
+    const hf = ((state.AF.A ^ n ^ t0) & HF) >> 4;
+    const t1 = t0 -% hf; // n
+
+    switch (op) {
+        inline .increment => {
+            state.HL.increment(); // HL += 1
+        },
+        inline .decrement => {
+            state.HL.decrement(); // HL -= 1
+        },
+    }
+
+    const bc = state.BC.getValue() -% 1;
+    state.BC.setValue(bc);
+
+    state.AF.F.S = t0 & SF != 0;
+    state.AF.F.Z = t0 == 0;
+    state.AF.F.H = hf != 0;
+    state.AF.F.PV = bc != 0;
+    state.AF.F.N = true;
+    state.AF.F.X = t1 & XF != 0; // 3rd bit
+    state.AF.F.Y = (t1 & 2) << 4 != 0; // 1st bit
+
+    return .{ t0, bc };
+}
+
+pub fn bt_cpi(state: *Z80State, opcode: *const OpCode) u8 {
+    state.PC +%= 1;
+    _ = bt_cp_x(state, opcode, .increment);
+    return 16;
+}
+
+pub fn bt_cpd(state: *Z80State, opcode: *const OpCode) u8 {
+    state.PC +%= 1;
+    _ = bt_cp_x(state, opcode, .decrement);
+    return 16;
+}
+
+pub inline fn bt_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: IncDecOperation) u8 {
+    const r = bt_cp_x(state, opcode, op);
+    const t0 = r[0];
+    const bc = r[1];
+
+    if (bc != 0 and t0 != 0) {
+        state.PC -%= 1; // prefix
+        const pc = state.PC >> 8;
+        state.AF.F.X = pc & XF != 0;
+        state.AF.F.Y = pc & YF != 0;
+        return 21;
+    }
+
+    state.PC +%= 1;
+    return 16;
+}
+
+pub fn bt_cpir(state: *Z80State, opcode: *const OpCode) u8 {
+    return bt_cpr_x(state, opcode, .increment);
+}
+
+pub fn bt_cpdr(state: *Z80State, opcode: *const OpCode) u8 {
+    return bt_cpr_x(state, opcode, .decrement);
 }
 
 const instructions_table = [256]InstructionFn{
@@ -609,8 +678,8 @@ const ed_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 8
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
-    bt_ldi, undefined, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // A
-    bt_ldir, undefined, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // B
+    bt_ldi, bt_cpi, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, bt_cpd, undefined, undefined, undefined, undefined, undefined, undefined, // A
+    bt_ldir, bt_cpir, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, bt_cpdr, undefined, undefined, undefined, undefined, undefined, undefined, // B
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
