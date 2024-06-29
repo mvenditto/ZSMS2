@@ -91,21 +91,17 @@ pub const AccumulatorFlagsRegister = packed struct {
         self.A = val;
     }
 
-    pub fn getValue(self: *AccumulatorFlagsRegister) u16 {
-        return switch (host_endianess) {
-            .little => @bitCast(self.*),
-            .big => {
-                const integer: u16 = @bitCast(self.*);
-                return @byteSwap(integer);
-            },
-        };
+    pub inline fn getValue(self: *const AccumulatorFlagsRegister) u16 {
+        const low: u8 = @bitCast(self.F);
+        const high: u8 = self.A;
+        return @intCast(low | @as(u16, high) << 8);
     }
 
-    pub fn setValue(self: *AccumulatorFlagsRegister, value: u16) void {
-        self.* = switch (host_endianess) {
-            .little => @bitCast(value),
-            .big => @bitCast(@byteSwap(value)),
-        };
+    pub inline fn setValue(self: *AccumulatorFlagsRegister, value: u16) void {
+        const low: u8 = @truncate(value & 0xFF);
+        const high: u8 = @truncate((value >> 8) & 0xFF);
+        self.A = high;
+        self.F = @bitCast(low);
     }
 
     comptime {

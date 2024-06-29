@@ -624,9 +624,43 @@ pub fn bs_cpdr(state: *Z80State, opcode: *const OpCode) u8 {
     return bs_cpr_x(state, opcode, .decrement);
 }
 
+pub fn be_ex_de_hl(state: *Z80State, _: *const OpCode) u8 {
+    std.mem.swap(processor.SixteenBitRegister, &state.DE, &state.HL);
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn be_ex_af_af2(state: *Z80State, _: *const OpCode) u8 {
+    std.mem.swap(processor.AccumulatorFlagsRegister, &state.AF, &state.AF_);
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn be_exx(state: *Z80State, _: *const OpCode) u8 {
+    std.mem.swap(processor.SixteenBitRegister, &state.BC, &state.BC_);
+    std.mem.swap(processor.SixteenBitRegister, &state.DE, &state.DE_);
+    std.mem.swap(processor.SixteenBitRegister, &state.HL, &state.HL_);
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn be_ex_sp_hl(state: *Z80State, _: *const OpCode) u8 {
+    std.mem.swap(u8, &state.memory[state.SP], &state.HL.low);
+    std.mem.swap(u8, &state.memory[state.SP +% 1], &state.HL.high);
+    state.PC +%= 1;
+    return 19;
+}
+
+pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
+    std.mem.swap(u8, &state.memory[state.SP], &state.addr_register.low);
+    std.mem.swap(u8, &state.memory[state.SP +% 1], &state.addr_register.high);
+    state.PC +%= 1;
+    return 23;
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, ld_bc_a, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, ld_a_bc, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 0
+    undefined, undefined, ld_bc_a, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, be_ex_af_af2, undefined, ld_a_bc, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 0
     undefined, undefined, ld_de_a, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, ld_a_de, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 1
     undefined, undefined, undefined, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, undefined, undefined, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
     undefined, undefined, ld_nn_a, undefined, al2_a_hl, al2_a_hl, ld_hl_n, undefined, undefined, undefined, ld_a_nn, undefined, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
@@ -639,9 +673,9 @@ const instructions_table = [256]InstructionFn{
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // A
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // B
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, // C
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, dd_prefix, al_a_n, undefined, // D
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, ed_prefix, al_a_n, undefined, // E
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, fd_prefix, al_a_n, undefined, // f
+    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, be_exx, undefined, undefined, undefined, dd_prefix, al_a_n, undefined, // D
+    undefined, undefined, undefined, be_ex_sp_hl, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, be_ex_de_hl, undefined, ed_prefix, al_a_n, undefined, // E
+    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, fd_prefix, al_a_n, undefined, // F
 };
 
 // Indexed addressing XY opcodes
@@ -661,7 +695,7 @@ const xy_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // B
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
+    undefined, undefined, undefined, be_ex_sp_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // F
 };
 

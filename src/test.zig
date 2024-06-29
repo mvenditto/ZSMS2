@@ -11,8 +11,8 @@ const CycleSample = struct {
 
 const OpcodeTest = struct {
     name: []const u8,
-    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
-    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
+    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
+    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
     cycles: []const [3]std.json.Value,
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
         var s = try cpu.Z80State.create(allocator);
@@ -33,6 +33,11 @@ const OpcodeTest = struct {
         s.R.setValue(init.r);
         s.IFF1 = init.iff1 == 1;
         s.IFF2 = init.iff2 == 1;
+
+        s.AF_.setValue(init.af_);
+        s.BC_.setValue(init.bc_);
+        s.DE_.setValue(init.de_);
+        s.HL_.setValue(init.hl_);
 
         for (init.ram) |loc| {
             s.memory[loc[0]] = @truncate(loc[1]);
@@ -71,6 +76,11 @@ const OpcodeTest = struct {
         try expectEquals(final.r, s.R.getValue());
         try expectEquals(self.cycles.len, s.cycles);
 
+        try expectEquals(final.af_, s.AF_.getValue());
+        try expectEquals(final.bc_, s.BC_.getValue());
+        try expectEquals(final.de_, s.DE_.getValue());
+        try expectEquals(final.hl_, s.HL_.getValue());
+
         for (final.ram) |loc| {
             const address: u16 = @truncate(loc[0]);
             const value: u8 = @truncate(loc[1]);
@@ -99,10 +109,16 @@ pub fn printError(
     std.debug.print("{s}:\nTRACE:\n{any}\n", .{ msg, trace });
 }
 
-test "dasdsa" {
-    var x = cpu.SixteenBitRegister{};
-    x.setValue(8192);
-    std.debug.print("\n\nhigh=0x{x}, low=0x{x}, value=0x{x} ({d})\n\n", .{ x.high, x.low, x.getValue(), x.getValue() });
+test "mem swap" {
+    var s = try cpu.Z80State.create(std.heap.page_allocator);
+    defer s.free(std.heap.page_allocator);
+    s.memory[0] = 42;
+    s.memory[1000] = 55;
+    try expectEquals(42, s.memory[0]);
+    try expectEquals(55, s.memory[1000]);
+    std.mem.swap(u8, &s.memory[0], &s.memory[1000]);
+    try expectEquals(55, s.memory[0]);
+    try expectEquals(42, s.memory[1000]);
 }
 
 test "16 bit registers set/get" {
@@ -421,6 +437,7 @@ test "SingleStepTests/z80" {
         // Block Search Group
         "ED A1", "ED B1", "ED A9", "ED B9", // CPI,CPIR,CPIR,CPDR
         // Block Exchange Group
+        "08", "D9", "EB", "E3", "dd E3", "fd E3", // EX and EXX
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
