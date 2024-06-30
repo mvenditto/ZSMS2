@@ -411,51 +411,52 @@ test "SingleStepTests/z80" {
 
     const opcodes_to_test = [_][]const u8{
         // 8-bit Arithment and Logical group
-        "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
-        "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
-        "97", "90", "91", "92", "93", "94", "95", "96", "dd 8E", "fd 8E", "d6", // SUB A,
-        "9F", "98", "99", "9A", "9B", "9C", "9D", "9E", "dd 9E", "fd 9E", "de", // SBC A,
-        "A7", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "dd A6", "fd A6", "e6", // AND A,
-        "AF", "A8", "A9", "AA", "AB", "AC", "AD", "AE", "dd AE", "fd AE", "ee", // XOR A,
-        "B7", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "dd B6", "fd B6", "f6", // OR A,
-        "BF", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "dd BE", "fd BE", "fe", // CP A,
-        "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
-        "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
-        // Load group
-        "ed 57", "ed 5F", "7F", "78", "79", "7A", "7B", "dd 7e", "fd 7e", "7C", "7D", "7E", "0A", "1A", "3A", "3E", // LD A,r + LD A,(HL|BC|DE)
-        "47", "40", "41", "42", "43", "44", "45", "46", "dd 46", "fd 46", "06", // LD B,r
-        "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", "dd 4e", "fd 4e", "0e", // LD C,r
-        "57", "50", "51", "52", "53", "54", "55", "56", "dd 56", "fd 56", "16", // LD D,r
-        "5F", "58", "59", "5A", "5B", "5C", "5D", "5E", "dd 5e", "fd 5e", "1e", // LD E,r
-        "67", "60", "61", "62", "63", "64", "65", "66", "dd 66", "fd 66", "26", // LD H,r
-        "6F", "68", "69", "6A", "6B", "6C", "6D", "6E", "dd 6e", "fd 6e", "2e", // LD L,r
-        "ed 47", "ed 4f", "32", // LD I,A - LD R,A
-        "77", "70", "71", "72", "73", "74", "75", "36", // LD (HL),r
-        "02", "12", // LD (BC|DE),A
-        "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
-        // Block Transfer Group
-        "ED A0", "ED B0", "ED A8", "ED B8", // LDI,LDIR,LDIR,LDDR
-        // Block Search Group
-        "ED A1", "ED B1", "ED A9", "ED B9", // CPI,CPIR,CPIR,CPDR
-        // Block Exchange Group
-        "08", "D9", "EB", "E3", "dd E3", "fd E3", // EX and EXX
-        // 16-bit Arithment and Logical group
-        "09", "19", "29", "39", // ADD HL,
-        "dd 09", "dd 19", "dd 29", "dd 39", // ADD IX,
-        "fd 09", "fd 19", "fd 29", "fd 39", // ADD IY,
-        "ed 4a", "ed 5a", "ed 6a", "ed 7a", // ADC HL,
-        "ed 42", "ed 52", "ed 62", "ed 72", // SBC HL,
-        "03", "13", "23", "33", "dd 23", "fd 23", // INC
-        "0b", "1b", "2b", "3b", "dd 2b", "fd 2b", // DEC
-        // Rotate and Shift group
-        "cb 07", "cb 00", "cb 01", "cb 02", "cb 03", "cb 04", "cb 05", // RLC
-        "cb 0F", "cb 08", "cb 08", "cb 0A", "cb 0B", "cb 0C", "cb 0D", // RRC
-        "cb 17", "cb 10", "cb 11", "cb 12", "cb 13", "cb 14", "cb 15", // RL
-        "cb 1F", "cb 18", "cb 18", "cb 1A", "cb 1B", "cb 1C", "cb 1D", // RR
-        "cb 20", "cb 21", "cb 22", "cb 23", "cb 24", "cb 25", "cb 27", // SLA
-        "cb 28", "cb 29", "cb 2A", "cb 2B", "cb 2C", "cb 2D", "cb 2F", // SRA
-        "cb 3f", "cb 38", "cb 39", "cb 3A", "cb 3B", "cb 3C", "cb 3D", // SRL
-        "cb 37", "cb 30", "cb 31", "cb 31", "cb 33", "cb 34", "cb 35", // SLL
+        // "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
+        // "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
+        // "97", "90", "91", "92", "93", "94", "95", "96", "dd 8E", "fd 8E", "d6", // SUB A,
+        // "9F", "98", "99", "9A", "9B", "9C", "9D", "9E", "dd 9E", "fd 9E", "de", // SBC A,
+        // "A7", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "dd A6", "fd A6", "e6", // AND A,
+        // "AF", "A8", "A9", "AA", "AB", "AC", "AD", "AE", "dd AE", "fd AE", "ee", // XOR A,
+        // "B7", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "dd B6", "fd B6", "f6", // OR A,
+        // "BF", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "dd BE", "fd BE", "fe", // CP A,
+        // "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
+        // "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
+        // // Load group
+        // "ed 57", "ed 5F", "7F", "78", "79", "7A", "7B", "dd 7e", "fd 7e", "7C", "7D", "7E", "0A", "1A", "3A", "3E", // LD A,r + LD A,(HL|BC|DE)
+        // "47", "40", "41", "42", "43", "44", "45", "46", "dd 46", "fd 46", "06", // LD B,r
+        // "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", "dd 4e", "fd 4e", "0e", // LD C,r
+        // "57", "50", "51", "52", "53", "54", "55", "56", "dd 56", "fd 56", "16", // LD D,r
+        // "5F", "58", "59", "5A", "5B", "5C", "5D", "5E", "dd 5e", "fd 5e", "1e", // LD E,r
+        // "67", "60", "61", "62", "63", "64", "65", "66", "dd 66", "fd 66", "26", // LD H,r
+        // "6F", "68", "69", "6A", "6B", "6C", "6D", "6E", "dd 6e", "fd 6e", "2e", // LD L,r
+        // "ed 47", "ed 4f", "32", // LD I,A - LD R,A
+        // "77", "70", "71", "72", "73", "74", "75", "36", // LD (HL),r
+        // "02", "12", // LD (BC|DE),A
+        // "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
+        // // Block Transfer Group
+        // "ED A0", "ED B0", "ED A8", "ED B8", // LDI,LDIR,LDIR,LDDR
+        // // Block Search Group
+        // "ED A1", "ED B1", "ED A9", "ED B9", // CPI,CPIR,CPIR,CPDR
+        // // Block Exchange Group
+        // "08", "D9", "EB", "E3", "dd E3", "fd E3", // EX and EXX
+        // // 16-bit Arithment and Logical group
+        // "09", "19", "29", "39", // ADD HL,
+        // "dd 09", "dd 19", "dd 29", "dd 39", // ADD IX,
+        // "fd 09", "fd 19", "fd 29", "fd 39", // ADD IY,
+        // "ed 4a", "ed 5a", "ed 6a", "ed 7a", // ADC HL,
+        // "ed 42", "ed 52", "ed 62", "ed 72", // SBC HL,
+        // "03", "13", "23", "33", "dd 23", "fd 23", // INC
+        // "0b", "1b", "2b", "3b", "dd 2b", "fd 2b", // DEC
+        // // Rotate and Shift group
+        // "cb 07", "cb 00", "cb 01", "cb 02", "cb 03", "cb 04", "cb 05", // RLC
+        // "cb 0F", "cb 08", "cb 08", "cb 0A", "cb 0B", "cb 0C", "cb 0D", // RRC
+        // "cb 17", "cb 10", "cb 11", "cb 12", "cb 13", "cb 14", "cb 15", // RL
+        // "cb 1F", "cb 18", "cb 18", "cb 1A", "cb 1B", "cb 1C", "cb 1D", // RR
+        // "cb 20", "cb 21", "cb 22", "cb 23", "cb 24", "cb 25", "cb 27", // SLA
+        // "cb 28", "cb 29", "cb 2A", "cb 2B", "cb 2C", "cb 2D", "cb 2F", // SRA
+        // "cb 3f", "cb 38", "cb 39", "cb 3A", "cb 3B", "cb 3C", "cb 3D", // SRL
+        // "cb 37", "cb 30", "cb 31", "cb 31", "cb 33", "cb 34", "cb 35", // SLL
+        "07", "0f", "17", "1f", // RLCA, RRCA, RLA, RRA
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

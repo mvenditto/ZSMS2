@@ -930,10 +930,62 @@ pub fn rot_r(state: *Z80State, opcode: *const OpCode) u8 {
     return cycles;
 }
 
+pub fn rlca(state: *Z80State, _: *const OpCode) u8 {
+    const value = std.math.rotl(u8, state.AF.A, 1);
+    state.AF.A = value;
+    state.AF.F.C = value & CF != 0;
+    state.AF.F.X = value & XF != 0;
+    state.AF.F.Y = value & YF != 0;
+    state.AF.F.H = false;
+    state.AF.F.N = false;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn rrca(state: *Z80State, _: *const OpCode) u8 {
+    const value = std.math.rotr(u8, state.AF.A, 1);
+    state.AF.A = value;
+    state.AF.F.C = value & 128 != 0; // 7th bit of A
+    state.AF.F.X = value & XF != 0;
+    state.AF.F.Y = value & YF != 0;
+    state.AF.F.H = false;
+    state.AF.F.N = false;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn rla(state: *Z80State, _: *const OpCode) u8 {
+    const cf0: u8 = state.AF.getFlags() & CF;
+    const cf1: u8 = state.AF.A & 128;
+    const value = (state.AF.A << 1) | cf0;
+    state.AF.A = value;
+    state.AF.F.C = cf1 != 0; // 7th bit of A
+    state.AF.F.X = value & XF != 0;
+    state.AF.F.Y = value & YF != 0;
+    state.AF.F.H = false;
+    state.AF.F.N = false;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn rra(state: *Z80State, _: *const OpCode) u8 {
+    const cf0: u8 = state.AF.getFlags() & CF;
+    const cf1: u8 = state.AF.A & CF;
+    const value = (state.AF.A >> 1) | (cf0 << 7);
+    state.AF.A = value;
+    state.AF.F.C = cf1 != 0; // 7th bit of A
+    state.AF.F.X = value & XF != 0;
+    state.AF.F.Y = value & YF != 0;
+    state.AF.F.H = false;
+    state.AF.F.N = false;
+    state.PC +%= 1;
+    return 4;
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, undefined, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, undefined, // 0
-    undefined, undefined, ld_de_a, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, add_hl_de, ld_a_de, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, undefined, // 1
+    undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rlca, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rrca, // 0
+    undefined, undefined, ld_de_a, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rla, undefined, add_hl_de, ld_a_de, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rra, // 1
     undefined, undefined, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, add_hl_hl, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
     undefined, undefined, ld_nn_a, inc_dec_sp, al2_a_hl, al2_a_hl, ld_hl_n, undefined, undefined, add_hl_sp, ld_a_nn, inc_dec_sp, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 4
