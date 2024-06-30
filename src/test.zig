@@ -25,7 +25,7 @@ const OpcodeTest = struct {
         s.DE.low = init.e;
         s.HL.high = init.h;
         s.HL.low = init.l;
-        s.SP = init.sp;
+        s.SP.setValue(init.sp);
         s.PC = init.pc;
         s.I = init.i;
         s.IX.setValue(init.ix);
@@ -49,6 +49,16 @@ const OpcodeTest = struct {
     fn expectState(self: *const OpcodeTest, s: *const cpu.Z80State) !void {
         const final = self.final;
 
+        try expectEquals(final.a, s.AF.A);
+        try expectEquals(final.b, s.BC.high);
+        try expectEquals(final.c, s.BC.low);
+        try expectEquals(final.d, s.DE.high);
+        try expectEquals(final.e, s.DE.low);
+        try expectEquals(final.h, s.HL.high);
+        try expectEquals(final.l, s.HL.low);
+        try expectEquals(final.sp, s.SP.getValue());
+        try expectEquals(final.pc, s.PC);
+
         expectEquals(final.f, s.AF.getFlags()) catch |err| {
             const exp_flags: cpu.FlagsRegister = @bitCast(final.f);
             std.debug.print("Flags mismatch:\n  expected 0b{b:0>8} {any},\n  found    0b{b:0>8} {any}\n", .{
@@ -59,18 +69,9 @@ const OpcodeTest = struct {
             return err;
         };
 
-        try expectEquals(final.a, s.AF.A);
-        try expectEquals(final.b, s.BC.high);
-        try expectEquals(final.c, s.BC.low);
-        try expectEquals(final.d, s.DE.high);
-        try expectEquals(final.e, s.DE.low);
-        try expectEquals(final.h, s.HL.high);
-        try expectEquals(final.l, s.HL.low);
-        try expectEquals(final.sp, s.SP);
-        try expectEquals(final.pc, s.PC);
-        try expectEquals(final.i, s.I);
         try expectEquals(final.ix, s.IX.getValue());
         try expectEquals(final.iy, s.IY.getValue());
+        try expectEquals(final.i, s.I);
         try expectEquals(final.iff1 == 1, s.IFF1);
         try expectEquals(final.iff2 == 1, s.IFF2);
         try expectEquals(final.r, s.R.getValue());
@@ -409,7 +410,7 @@ test "SingleStepTests/z80" {
     const op = @import("opcodes.zig");
 
     const opcodes_to_test = [_][]const u8{
-        // Arithment and Logical group
+        // 8-bit Arithment and Logical group
         "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
         "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
         "97", "90", "91", "92", "93", "94", "95", "96", "dd 8E", "fd 8E", "d6", // SUB A,
@@ -438,6 +439,14 @@ test "SingleStepTests/z80" {
         "ED A1", "ED B1", "ED A9", "ED B9", // CPI,CPIR,CPIR,CPDR
         // Block Exchange Group
         "08", "D9", "EB", "E3", "dd E3", "fd E3", // EX and EXX
+        // 16-bit Arithment and Logical group
+        "09", "19", "29", "39", // ADD HL,
+        "dd 09", "dd 19", "dd 29", "dd 39", // ADD IX,
+        "fd 09", "fd 19", "fd 29", "fd 39", // ADD IY,
+        "ed 4a", "ed 5a", "ed 6a", "ed 7a", // ADC HL,
+        "ed 42", "ed 52", "ed 62", "ed 72", // SBC HL,
+        "03", "13", "23", "33", "dd 23", "fd 23", // INC
+        "0b", "1b", "2b", "3b", "dd 2b", "fd 2b", // DEC
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

@@ -173,10 +173,10 @@ pub const Z80State = packed struct {
     AF_: AccumulatorFlagsRegister = .{},
 
     // Special-purpose registers
-    SP: u16 = 0, // stack pointer
-    PC: u16 = 0, // program counter
+    SP: SixteenBitRegister = .{}, // stack pointer
     IX: SixteenBitRegister = .{}, // index register x
     IY: SixteenBitRegister = .{}, // index register y
+    PC: u16 = 0, // program counter
     R: MemoryRefreshRegister = .{}, // memory refresh
     I: u8 = 0, // interrupt page address (high-order byte)
 
