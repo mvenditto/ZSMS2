@@ -84,6 +84,15 @@ pub inline fn readExtended(state: *Z80State, comptime offset: u8) u8 {
     return value;
 }
 
+pub inline fn readExtendedUpdateWZ(state: *Z80State, comptime offset: u8) u8 {
+    const low = state.memory[state.PC + offset];
+    const high = state.memory[state.PC + offset + 1];
+    const address: u16 = @intCast(low | @as(u16, high) << 8);
+    const value = state.memory[address];
+    state.WZ.setValue(address +% 1);
+    return value;
+}
+
 pub inline fn readIndirect(state: *Z80State, rp: u8) u8 {
     const address = state.gp_registers_pairs[rp].getValue();
     const value = state.memory[address];
@@ -95,6 +104,7 @@ pub fn readIndexed(state: *Z80State, comptime offset: u8) u8 {
     const d: i8 = @bitCast(state.memory[state.PC + offset]); // displacement is two's complement
     const address: u16 = @intCast(@mod(base_address + d, 65536));
     const value = state.memory[address];
+    state.WZ.setValue(address);
     return value;
 }
 
@@ -114,11 +124,28 @@ pub inline fn storeIndexed(state: *Z80State, value: u8, comptime offset: u8) voi
     state.memory[address] = value;
 }
 
+pub inline fn storeIndexedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
+    const base_address: i32 = @intCast(state.addr_register.getValue());
+    const d: i8 = @bitCast(state.memory[state.PC + offset]); // displacement is two's complement
+    const address: u16 = @intCast(@mod(base_address + d, 65536));
+    state.memory[address] = value;
+    state.WZ.setValue(address);
+}
+
 pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) void {
     const low = state.memory[state.PC + offset];
     const high = state.memory[state.PC + offset + 1];
     const address: u16 = @intCast(low | @as(u16, high) << 8);
     state.memory[address] = value;
+}
+
+pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
+    const low = state.memory[state.PC + offset];
+    const high = state.memory[state.PC + offset + 1];
+    const address: u16 = @intCast(low | @as(u16, high) << 8);
+    state.memory[address] = value;
+    state.WZ.low = @truncate((address +% 1) & 0xFF);
+    state.WZ.high = state.AF.A;
 }
 
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
@@ -344,6 +371,7 @@ pub inline fn add_16(dst: *SixteenBitRegister, src: *SixteenBitRegister, state: 
     state.AF.F.X = xy & XF != 0;
     state.AF.F.Y = xy & YF != 0;
 
+    state.WZ.setValue(dst.getValue() +% 1);
     dst.setValue(@truncate(t));
 }
 
@@ -365,6 +393,7 @@ pub inline fn adc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     state.AF.F.Z = t == 0;
     state.AF.F.N = false;
 
+    state.WZ.setValue(state.HL.getValue() +% 1);
     state.HL.setValue(t16);
 }
 
@@ -386,6 +415,7 @@ pub inline fn sbc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     state.AF.F.Z = t == 0;
     state.AF.F.N = true;
 
+    state.WZ.setValue(state.HL.getValue() +% 1);
     state.HL.setValue(t16);
 }
 
@@ -581,6 +611,7 @@ pub fn ld_r_hl(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn ld_a_bc(state: *Z80State, _: *const OpCode) u8 {
     const dst = @intFromEnum(processor.EightBitRegisters.A);
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.BC));
+    state.WZ.setValue(state.BC.getValue() +% 1);
     state.PC +%= 1;
     return 7;
 }
@@ -588,6 +619,7 @@ pub fn ld_a_bc(state: *Z80State, _: *const OpCode) u8 {
 pub fn ld_a_de(state: *Z80State, _: *const OpCode) u8 {
     const dst = @intFromEnum(processor.EightBitRegisters.A);
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.DE));
+    state.WZ.setValue(state.DE.getValue() +% 1);
     state.PC +%= 1;
     return 7;
 }
@@ -599,13 +631,13 @@ pub fn ld_r_xy(state: *Z80State, opcode: *const OpCode) u8 {
 }
 
 pub fn ld_a_nn(state: *Z80State, opcode: *const OpCode) u8 {
-    state.gp_registers[opcode.y] = readExtended(state, 1);
+    state.gp_registers[opcode.y] = readExtendedUpdateWZ(state, 1);
     state.PC +%= 3;
     return 13;
 }
 
 pub fn ld_nn_a(state: *Z80State, _: *const OpCode) u8 {
-    storeExtended(state, state.AF.A, 1);
+    storeExtendedUpdateWZ(state, state.AF.A, 1);
     state.PC +%= 3;
     return 13;
 }
@@ -662,26 +694,32 @@ pub fn ld_hl_n(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn ld_bc_a(state: *Z80State, _: *const OpCode) u8 {
-    state.memory[state.BC.getValue()] = state.AF.A;
+    const rp = state.BC.getValue();
+    state.memory[rp] = state.AF.A;
     state.PC +%= 1;
+    state.WZ.low = @truncate((rp +% 1) & 0xFF);
+    state.WZ.high = state.AF.A;
     return 7;
 }
 
 pub fn ld_de_a(state: *Z80State, _: *const OpCode) u8 {
-    state.memory[state.DE.getValue()] = state.AF.A;
+    const rp = state.DE.getValue();
+    state.memory[rp] = state.AF.A;
     state.PC +%= 1;
+    state.WZ.low = @truncate((rp +% 1) & 0xFF);
+    state.WZ.high = state.AF.A;
     return 7;
 }
 
 pub fn ld_xy_r(state: *Z80State, opcode: *const OpCode) u8 {
-    storeIndexed(state, readRegister(state, opcode.z), 1);
+    storeIndexedUpdateWZ(state, readRegister(state, opcode.z), 1);
     state.PC +%= 2;
     return 19;
 }
 
 pub fn ld_xy_n(state: *Z80State, _: *const OpCode) u8 {
     const value = readImmediate(state, 2);
-    storeIndexed(state, value, 1);
+    storeIndexedUpdateWZ(state, value, 1);
     state.PC +%= 3;
     return 19;
 }
@@ -729,7 +767,12 @@ pub inline fn bt_ld_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOpe
 pub inline fn bt_ldr_x(state: *Z80State, opcode: *const OpCode, comptime op: IncDecOperation) u8 {
     const cycles = bt_ld_x(state, opcode, op);
 
-    if (state.BC.getValue() != 0) {
+    const bc = state.BC.getValue();
+
+    if (bc != 0) {
+        if (bc != 1) {
+            state.WZ.setValue(state.PC);
+        }
         const pc = state.PC >> 8;
         state.AF.F.X = pc & XF != 0;
         state.AF.F.Y = pc & YF != 0;
@@ -794,12 +837,14 @@ pub inline fn bs_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOpe
 pub fn bs_cpi(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
     _ = bs_cp_x(state, opcode, .increment);
+    state.WZ.increment();
     return 16;
 }
 
 pub fn bs_cpd(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
     _ = bs_cp_x(state, opcode, .decrement);
+    state.WZ.decrement();
     return 16;
 }
 
@@ -807,6 +852,19 @@ pub inline fn bs_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: Inc
     const r = bs_cp_x(state, opcode, op);
     const t0 = r[0];
     const bc = r[1];
+
+    if (bc == 1 or t0 == 0) {
+        switch (op) {
+            inline .increment => {
+                state.WZ.increment();
+            },
+            inline .decrement => {
+                state.WZ.decrement();
+            },
+        }
+    } else {
+        state.WZ.setValue(state.PC);
+    }
 
     if (bc != 0 and t0 != 0) {
         state.PC -%= 1; // prefix
@@ -853,6 +911,7 @@ pub fn be_ex_sp_hl(state: *Z80State, _: *const OpCode) u8 {
     std.mem.swap(u8, &state.memory[sp], &state.HL.low);
     std.mem.swap(u8, &state.memory[sp +% 1], &state.HL.high);
     state.PC +%= 1;
+    state.WZ.setValue(state.HL.getValue());
     return 19;
 }
 
@@ -860,6 +919,7 @@ pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
     const sp = state.SP.getValue();
     std.mem.swap(u8, &state.memory[sp], &state.addr_register.low);
     std.mem.swap(u8, &state.memory[sp +% 1], &state.addr_register.high);
+    state.WZ.setValue(state.addr_register.getValue());
     state.PC +%= 1;
     return 23;
 }
@@ -982,6 +1042,76 @@ pub fn rra(state: *Z80State, _: *const OpCode) u8 {
     return 4;
 }
 
+// In section 4.1 of "The Undocumented Z80 Documented" it is stated
+// that for BIT n,r XF and YF are set based on the tested bit.
+// Based on test suite SingleStepTests/z80 it seems instead that XF and YF
+// are copies of bits 3 and 5 of the tested register (r).
+pub fn bit_r(state: *Z80State, opcode: *const OpCode) u8 {
+    const n = opcode.y; // what bit to test, res or set
+
+    switch (opcode.x) {
+        1 => { // BIT
+            const r = state.gp_registers[opcode.z];
+            const b = (r >> n) & 1;
+            state.AF.F.S = b != 0 and n == 7;
+            state.AF.F.Z = b == 0;
+            state.AF.F.H = true;
+            state.AF.F.N = false;
+            state.AF.F.PV = state.AF.F.Z;
+            state.AF.F.X = r & XF != 0;
+            state.AF.F.Y = r & YF != 0;
+        },
+        2 => { // RES
+            state.gp_registers[opcode.z] &= ~(@as(u8, 1) << n);
+        },
+        3 => { // SET
+            state.gp_registers[opcode.z] |= @as(u8, 1) << n;
+        },
+        else => {},
+    }
+
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn bit_hl(state: *Z80State, opcode: *const OpCode) u8 {
+    const n = opcode.y; // what bit to test, res or set
+    const hl = @intFromEnum(RegisterPairs.HL);
+    const r = readIndirect(state, hl);
+    var cycles: u8 = 0;
+    switch (opcode.x) {
+        1 => { // BIT
+            const t: u8 = @truncate(r & (@as(u32, 1) << n));
+            if (t == 0) {
+                state.AF.F.S = false;
+                state.AF.F.Z = true;
+                state.AF.F.PV = true;
+            } else {
+                state.AF.F.S = t & SF != 0;
+                state.AF.F.Z = false;
+                state.AF.F.PV = false;
+            }
+            state.AF.F.H = true;
+            state.AF.F.N = false;
+            state.AF.F.X = state.WZ.high & XF != 0;
+            state.AF.F.Y = state.WZ.high & YF != 0;
+            cycles = 12;
+        },
+        2 => { // RES
+            storeIndirect(state, r & ~(@as(u8, 1) << n), hl);
+            cycles = 15;
+        },
+        3 => { // SET
+            storeIndirect(state, r | @as(u8, 1) << n, hl);
+            cycles = 15;
+        },
+        else => {},
+    }
+
+    state.PC +%= 1;
+    return cycles;
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
     undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rlca, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rrca, // 0
@@ -1045,23 +1175,23 @@ const ed_instructions_table = [256]InstructionFn{
 };
 
 const cb_instructions_table = [256]InstructionFn{
-    //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
+    //  0     1      2     3      4       5       6        7        8      9    A      B      C      D       E          F
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 0
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 1
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 2
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 3
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 4
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 5
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 6
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 8
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // A
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // F
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 4
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 5
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 6
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 7
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 8
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 9
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // A
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // B
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // C
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // D
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // E
+    bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // F
 };
 
 pub inline fn fetchOpcode(state: *Z80State) u8 {

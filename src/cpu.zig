@@ -176,6 +176,10 @@ pub const Z80State = packed struct {
     SP: SixteenBitRegister = .{}, // stack pointer
     IX: SixteenBitRegister = .{}, // index register x
     IY: SixteenBitRegister = .{}, // index register y
+
+    // The MEMPTR, see: https://zx-pk.ru/attachment.php?attachmentid=2989
+    WZ: SixteenBitRegister = .{}, // aka MEMPTR
+
     PC: u16 = 0, // program counter
     R: MemoryRefreshRegister = .{}, // memory refresh
     I: u8 = 0, // interrupt page address (high-order byte)
