@@ -447,6 +447,15 @@ test "SingleStepTests/z80" {
         "ed 42", "ed 52", "ed 62", "ed 72", // SBC HL,
         "03", "13", "23", "33", "dd 23", "fd 23", // INC
         "0b", "1b", "2b", "3b", "dd 2b", "fd 2b", // DEC
+        // Rotate and Shift group
+        "cb 07", "cb 00", "cb 01", "cb 02", "cb 03", "cb 04", "cb 05", // RLC
+        "cb 0F", "cb 08", "cb 08", "cb 0A", "cb 0B", "cb 0C", "cb 0D", // RRC
+        "cb 17", "cb 10", "cb 11", "cb 12", "cb 13", "cb 14", "cb 15", // RL
+        "cb 1F", "cb 18", "cb 18", "cb 1A", "cb 1B", "cb 1C", "cb 1D", // RR
+        "cb 20", "cb 21", "cb 22", "cb 23", "cb 24", "cb 25", "cb 27", // SLA
+        "cb 28", "cb 29", "cb 2A", "cb 2B", "cb 2C", "cb 2D", "cb 2F", // SRA
+        "cb 3f", "cb 38", "cb 39", "cb 3A", "cb 3B", "cb 3C", "cb 3D", // SRL
+        "cb 37", "cb 30", "cb 31", "cb 31", "cb 33", "cb 34", "cb 35", // SLL
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

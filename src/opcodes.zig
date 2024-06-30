@@ -41,6 +41,7 @@ const YF = 32;
 const HF = 16;
 const XF = 8;
 const PVF = 4;
+const CF = 1;
 
 const InstructionFn = *const fn (*Z80State, *const OpCode) u8;
 
@@ -551,6 +552,14 @@ pub fn ed_prefix(state: *Z80State, _: *const OpCode) u8 {
     return insn_func(state, &opcode);
 }
 
+pub fn cb_prefix(state: *Z80State, _: *const OpCode) u8 {
+    state.PC +%= 1;
+    const opcode_int = fetchOpcode(state);
+    const opcode: OpCode = @bitCast(opcode_int);
+    const insn_func = cb_instructions_table[opcode_int];
+    return insn_func(state, &opcode);
+}
+
 pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
     state.PC +%= 1;
@@ -855,6 +864,72 @@ pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
     return 23;
 }
 
+pub fn rot_r(state: *Z80State, opcode: *const OpCode) u8 {
+    const value = state.gp_registers[opcode.z];
+    var res: u8 = 0;
+    var cf: u8 = 0;
+    var cycles: u8 = 0;
+
+    switch (opcode.y) {
+        0 => { // RLC
+            res = std.math.rotl(u8, value, 1);
+            cf = res & CF;
+            cycles = 8;
+        },
+        1 => { // RRC
+            cf = value & CF;
+            res = std.math.rotr(u8, value, 1);
+            cycles = 8;
+        },
+        2 => { // RL
+            cf = value & 128;
+            const f: u8 = state.AF.getFlags() & CF;
+            res = (value << 1) | f;
+            cycles = 8;
+        },
+        3 => { // RR
+            cf = value & CF;
+            const f: u8 = state.AF.getFlags() & CF;
+            res = (value >> 1) | (f << 7);
+            cycles = 8;
+        },
+        4 => { // SLA
+            cf = value >> 7;
+            res = value << 1;
+            cycles = 8;
+        },
+        5 => { // SRA
+            cf = value & CF;
+            res = (value & 128) | (value >> 1);
+            cycles = 8;
+        },
+        6 => { // SLL
+            cf = value >> 7;
+            res = (value << 1) | CF;
+            cycles = 8;
+        },
+        7 => { // SRL
+            cf = value & CF;
+            res = value >> 1;
+            cycles = 8;
+        },
+    }
+
+    state.gp_registers[opcode.z] = res;
+
+    state.AF.F.N = false;
+    state.AF.F.H = false;
+    state.AF.F.Z = res == 0;
+    state.AF.F.PV = hasEvenParity8(res);
+    state.AF.F.C = cf != 0;
+    state.AF.F.S = res & SF != 0;
+    state.AF.F.X = res & XF != 0;
+    state.AF.F.Y = res & YF != 0;
+
+    state.PC +%= 1;
+    return cycles;
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
     undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, undefined, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, undefined, // 0
@@ -869,7 +944,7 @@ const instructions_table = [256]InstructionFn{
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // 9
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // A
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, // C
+    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, cb_prefix, undefined, undefined, al_a_n, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, be_exx, undefined, undefined, undefined, dd_prefix, al_a_n, undefined, // D
     undefined, undefined, undefined, be_ex_sp_hl, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, be_ex_de_hl, undefined, ed_prefix, al_a_n, undefined, // E
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, fd_prefix, al_a_n, undefined, // F
@@ -911,6 +986,26 @@ const ed_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
     bt_ldi, bs_cpi, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, bs_cpd, undefined, undefined, undefined, undefined, undefined, undefined, // A
     bt_ldir, bs_cpir, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, bs_cpdr, undefined, undefined, undefined, undefined, undefined, undefined, // B
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // F
+};
+
+const cb_instructions_table = [256]InstructionFn{
+    //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 0
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 1
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 2
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 3
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 4
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 5
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 6
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 7
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 8
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // A
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // B
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
