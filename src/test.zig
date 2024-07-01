@@ -15,7 +15,7 @@ const OpcodeTest = struct {
     final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
     cycles: []const [3]std.json.Value,
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
-        var s = try cpu.Z80State.create(allocator);
+        var s = try cpu.Z80State.init(allocator);
         const init = self.initial;
         s.AF.A = init.a;
         s.AF.setFlags(init.f);
@@ -112,8 +112,8 @@ pub fn printError(
 }
 
 test "mem swap" {
-    var s = try cpu.Z80State.create(std.heap.page_allocator);
-    defer s.free(std.heap.page_allocator);
+    var s = try cpu.Z80State.init(std.heap.page_allocator);
+    defer s.deinit(std.heap.page_allocator);
     s.memory[0] = 42;
     s.memory[1000] = 55;
     try expectEquals(42, s.memory[0]);
@@ -124,7 +124,7 @@ test "mem swap" {
 }
 
 test "16 bit registers set/get" {
-    var r = try cpu.Z80State.create(std.heap.page_allocator);
+    var r = try cpu.Z80State.init(std.heap.page_allocator);
 
     var i: u16 = 0;
     while (i < std.math.maxInt(u16)) : (i += 1) {
@@ -147,7 +147,7 @@ test "16 bit registers set/get" {
 }
 
 test "Flags register set/get" {
-    var r = try cpu.Z80State.create(std.heap.page_allocator);
+    var r = try cpu.Z80State.init(std.heap.page_allocator);
     if (false) {
         r.AF.setFlags(0b00000000);
         try expect(r.AF.F.zero == false);
@@ -292,7 +292,7 @@ test "load rom" {
 }
 
 test "register array access" {
-    var state = try cpu.Z80State.create(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(std.heap.page_allocator);
     const expected = [8]u8{ 10, 11, 20, 21, 30, 31, 255, 41 };
 
     state.BC.high = expected[@intFromEnum(cpu.EightBitRegisters.B)];
@@ -314,7 +314,7 @@ test "register array access" {
 }
 
 test "register pairs array access" {
-    var state = try cpu.Z80State.create(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(std.heap.page_allocator);
     const expected = [4]u16{ 8192, 16384, 32768, 65535 };
 
     state.BC.setValue(expected[@intFromEnum(cpu.RegisterPairs2.BC)]);
@@ -334,7 +334,7 @@ test "register pairs array access" {
 
 test "ADD A,r" {
     const op = @import("opcodes.zig");
-    var state = try cpu.Z80State.create(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(std.heap.page_allocator);
     state.AF.A = 0x44;
     _ = op.add_a_x(state, 0x11);
     try expect(state.AF.A == 0x55);
@@ -471,6 +471,75 @@ test "SingleStepTests/z80" {
         "cb d0", "cb d1", "cb d2", "cb d3", "cb d4", "cb d5", "cb d7", "cb d8", "cb d9", "cb da", "cb db", "cb dc", "cb dd", "cb de", "cb df",
         "cb e0", "cb e1", "cb e2", "cb e3", "cb e4", "cb e5", "cb e7", "cb e8", "cb e9", "cb ea", "cb eb", "cb ec", "cb ed", "cb ee", "cb ef",
         "cb f0", "cb f1", "cb f2", "cb f3", "cb f4", "cb f5", "cb f7", "cb f8", "cb f9", "cb fa", "cb fb", "cb fc", "cb fd", "cb fe", "cb ff",
+        "cb 06",       "cb 16",       "cb 26",       "cb 36",       "cb 0e",       "cb 1e",       "cb 2e",       "cb 3e", // (HL)
+        // DDCB - rotate/shift
+        "dd cb __ 00", "dd cb __ 01", "dd cb __ 02", "dd cb __ 03", "dd cb __ 04", "dd cb __ 05", "dd cb __ 06", "dd cb __ 07",
+        "dd cb __ 08", "dd cb __ 09", "dd cb __ 0a", "dd cb __ 0b", "dd cb __ 0c", "dd cb __ 0d", "dd cb __ 0e", "dd cb __ 0f",
+        "dd cb __ 10", "dd cb __ 11", "dd cb __ 12", "dd cb __ 13", "dd cb __ 14", "dd cb __ 15", "dd cb __ 16", "dd cb __ 17",
+        "dd cb __ 18", "dd cb __ 19", "dd cb __ 1a", "dd cb __ 1b", "dd cb __ 1c", "dd cb __ 1d", "dd cb __ 1e", "dd cb __ 1f",
+        "dd cb __ 20", "dd cb __ 21", "dd cb __ 22", "dd cb __ 23", "dd cb __ 24", "dd cb __ 25", "dd cb __ 26", "dd cb __ 27",
+        "dd cb __ 28", "dd cb __ 29", "dd cb __ 2a", "dd cb __ 2b", "dd cb __ 2c", "dd cb __ 2d", "dd cb __ 2e", "dd cb __ 2f",
+        "dd cb __ 30", "dd cb __ 31", "dd cb __ 32", "dd cb __ 33", "dd cb __ 34", "dd cb __ 35", "dd cb __ 36", "dd cb __ 37",
+        "dd cb __ 38", "dd cb __ 39", "dd cb __ 3a", "dd cb __ 3b", "dd cb __ 3c", "dd cb __ 3d", "dd cb __ 3e", "dd cb __ 3f",
+        // FDCB rotate/shift
+        "fd cb __ 00", "fd cb __ 01", "fd cb __ 02", "fd cb __ 03", "fd cb __ 04", "fd cb __ 05", "fd cb __ 06", "fd cb __ 07",
+        "fd cb __ 08", "fd cb __ 09", "fd cb __ 0a", "fd cb __ 0b", "fd cb __ 0c", "fd cb __ 0d", "fd cb __ 0e", "fd cb __ 0f",
+        "fd cb __ 10", "fd cb __ 11", "fd cb __ 12", "fd cb __ 13", "fd cb __ 14", "fd cb __ 15", "fd cb __ 16", "fd cb __ 17",
+        "fd cb __ 18", "fd cb __ 19", "fd cb __ 1a", "fd cb __ 1b", "fd cb __ 1c", "fd cb __ 1d", "fd cb __ 1e", "fd cb __ 1f",
+        "fd cb __ 20", "fd cb __ 21", "fd cb __ 22", "fd cb __ 23", "fd cb __ 24", "fd cb __ 25", "fd cb __ 26", "fd cb __ 27",
+        "fd cb __ 28", "fd cb __ 29", "fd cb __ 2a", "fd cb __ 2b", "fd cb __ 2c", "fd cb __ 2d", "fd cb __ 2e", "fd cb __ 2f",
+        "fd cb __ 30", "fd cb __ 31", "fd cb __ 32", "fd cb __ 33", "fd cb __ 34", "fd cb __ 35", "fd cb __ 36", "fd cb __ 37",
+        "fd cb __ 38", "fd cb __ 39", "fd cb __ 3a", "fd cb __ 3b", "fd cb __ 3c", "fd cb __ 3d", "fd cb __ 3e", "fd cb __ 3f",
+        // DDCB bit manipulation
+        "dd cb __ 40", "dd cb __ 41", "dd cb __ 42", "dd cb __ 43", "dd cb __ 44", "dd cb __ 45", "dd cb __ 46", "dd cb __ 47",
+        "dd cb __ 48", "dd cb __ 49", "dd cb __ 4a", "dd cb __ 4b", "dd cb __ 4c", "dd cb __ 4d", "dd cb __ 4e", "dd cb __ 4f",
+        "dd cb __ 50", "dd cb __ 51", "dd cb __ 52", "dd cb __ 53", "dd cb __ 54", "dd cb __ 55", "dd cb __ 56", "dd cb __ 57",
+        "dd cb __ 58", "dd cb __ 59", "dd cb __ 5a", "dd cb __ 5b", "dd cb __ 5c", "dd cb __ 5d", "dd cb __ 5e", "dd cb __ 5f",
+        "dd cb __ 60", "dd cb __ 61", "dd cb __ 62", "dd cb __ 63", "dd cb __ 64", "dd cb __ 65", "dd cb __ 66", "dd cb __ 67",
+        "dd cb __ 68", "dd cb __ 69", "dd cb __ 6a", "dd cb __ 6b", "dd cb __ 6c", "dd cb __ 6d", "dd cb __ 6e", "dd cb __ 6f",
+        "dd cb __ 70", "dd cb __ 71", "dd cb __ 72", "dd cb __ 73", "dd cb __ 74", "dd cb __ 75", "dd cb __ 76", "dd cb __ 77",
+        "dd cb __ 78", "dd cb __ 79", "dd cb __ 7a", "dd cb __ 7b", "dd cb __ 7c", "dd cb __ 7d", "dd cb __ 7e", "dd cb __ 7f",
+        "dd cb __ 80", "dd cb __ 81", "dd cb __ 82", "dd cb __ 83", "dd cb __ 84", "dd cb __ 85", "dd cb __ 86", "dd cb __ 87",
+        "dd cb __ 88", "dd cb __ 89", "dd cb __ 8a", "dd cb __ 8b", "dd cb __ 8c", "dd cb __ 8d", "dd cb __ 8e", "dd cb __ 8f",
+        "dd cb __ 90", "dd cb __ 91", "dd cb __ 92", "dd cb __ 93", "dd cb __ 94", "dd cb __ 95", "dd cb __ 96", "dd cb __ 97",
+        "dd cb __ 98", "dd cb __ 99", "dd cb __ 9a", "dd cb __ 9b", "dd cb __ 9c", "dd cb __ 9d", "dd cb __ 9e", "dd cb __ 9f",
+        "dd cb __ a0", "dd cb __ a1", "dd cb __ a2", "dd cb __ a3", "dd cb __ a4", "dd cb __ a5", "dd cb __ a6", "dd cb __ a7",
+        "dd cb __ a8", "dd cb __ a9", "dd cb __ aa", "dd cb __ ab", "dd cb __ ac", "dd cb __ ad", "dd cb __ ae", "dd cb __ af",
+        "dd cb __ b0", "dd cb __ b1", "dd cb __ b2", "dd cb __ b3", "dd cb __ b4", "dd cb __ b5", "dd cb __ b6", "dd cb __ b7",
+        "dd cb __ b8", "dd cb __ b9", "dd cb __ ba", "dd cb __ bb", "dd cb __ bc", "dd cb __ bd", "dd cb __ be", "dd cb __ bf",
+        "dd cb __ c0", "dd cb __ c1", "dd cb __ c2", "dd cb __ c3", "dd cb __ c4", "dd cb __ c5", "dd cb __ c6", "dd cb __ c7",
+        "dd cb __ c8", "dd cb __ c9", "dd cb __ ca", "dd cb __ cb", "dd cb __ cc", "dd cb __ cd", "dd cb __ ce", "dd cb __ cf",
+        "dd cb __ d0", "dd cb __ d1", "dd cb __ d2", "dd cb __ d3", "dd cb __ d4", "dd cb __ d5", "dd cb __ d6", "dd cb __ d7",
+        "dd cb __ d8", "dd cb __ d9", "dd cb __ da", "dd cb __ db", "dd cb __ dc", "dd cb __ dd", "dd cb __ de", "dd cb __ df",
+        "dd cb __ e0", "dd cb __ e1", "dd cb __ e2", "dd cb __ e3", "dd cb __ e4", "dd cb __ e5", "dd cb __ e6", "dd cb __ e7",
+        "dd cb __ e8", "dd cb __ e9", "dd cb __ ea", "dd cb __ eb", "dd cb __ ec", "dd cb __ ed", "dd cb __ ee", "dd cb __ ef",
+        "dd cb __ f0", "dd cb __ f1", "dd cb __ f2", "dd cb __ f3", "dd cb __ f4", "dd cb __ f5", "dd cb __ f6", "dd cb __ f7",
+        "dd cb __ f8", "dd cb __ f9", "dd cb __ fa", "dd cb __ fb", "dd cb __ fc", "dd cb __ fd", "dd cb __ fe", "dd cb __ ff",
+        // FDCB bit manipulation
+        "fd cb __ 40", "fd cb __ 41", "fd cb __ 42", "fd cb __ 43", "fd cb __ 44", "fd cb __ 45", "fd cb __ 46", "fd cb __ 47",
+        "fd cb __ 48", "fd cb __ 49", "fd cb __ 4a", "fd cb __ 4b", "fd cb __ 4c", "fd cb __ 4d", "fd cb __ 4e", "fd cb __ 4f",
+        "fd cb __ 50", "fd cb __ 51", "fd cb __ 52", "fd cb __ 53", "fd cb __ 54", "fd cb __ 55", "fd cb __ 56", "fd cb __ 57",
+        "fd cb __ 58", "fd cb __ 59", "fd cb __ 5a", "fd cb __ 5b", "fd cb __ 5c", "fd cb __ 5d", "fd cb __ 5e", "fd cb __ 5f",
+        "fd cb __ 60", "fd cb __ 61", "fd cb __ 62", "fd cb __ 63", "fd cb __ 64", "fd cb __ 65", "fd cb __ 66", "fd cb __ 67",
+        "fd cb __ 68", "fd cb __ 69", "fd cb __ 6a", "fd cb __ 6b", "fd cb __ 6c", "fd cb __ 6d", "fd cb __ 6e", "fd cb __ 6f",
+        "fd cb __ 70", "fd cb __ 71", "fd cb __ 72", "fd cb __ 73", "fd cb __ 74", "fd cb __ 75", "fd cb __ 76", "fd cb __ 77",
+        "fd cb __ 78", "fd cb __ 79", "fd cb __ 7a", "fd cb __ 7b", "fd cb __ 7c", "fd cb __ 7d", "fd cb __ 7e", "fd cb __ 7f",
+        "fd cb __ 80", "fd cb __ 81", "fd cb __ 82", "fd cb __ 83", "fd cb __ 84", "fd cb __ 85", "fd cb __ 86", "fd cb __ 87",
+        "fd cb __ 88", "fd cb __ 89", "fd cb __ 8a", "fd cb __ 8b", "fd cb __ 8c", "fd cb __ 8d", "fd cb __ 8e", "fd cb __ 8f",
+        "fd cb __ 90", "fd cb __ 91", "fd cb __ 92", "fd cb __ 93", "fd cb __ 94", "fd cb __ 95", "fd cb __ 96", "fd cb __ 97",
+        "fd cb __ 98", "fd cb __ 99", "fd cb __ 9a", "fd cb __ 9b", "fd cb __ 9c", "fd cb __ 9d", "fd cb __ 9e", "fd cb __ 9f",
+        "fd cb __ a0", "fd cb __ a1", "fd cb __ a2", "fd cb __ a3", "fd cb __ a4", "fd cb __ a5", "fd cb __ a6", "fd cb __ a7",
+        "fd cb __ a8", "fd cb __ a9", "fd cb __ aa", "fd cb __ ab", "fd cb __ ac", "fd cb __ ad", "fd cb __ ae", "fd cb __ af",
+        "fd cb __ b0", "fd cb __ b1", "fd cb __ b2", "fd cb __ b3", "fd cb __ b4", "fd cb __ b5", "fd cb __ b6", "fd cb __ b7",
+        "fd cb __ b8", "fd cb __ b9", "fd cb __ ba", "fd cb __ bb", "fd cb __ bc", "fd cb __ bd", "fd cb __ be", "fd cb __ bf",
+        "fd cb __ c0", "fd cb __ c1", "fd cb __ c2", "fd cb __ c3", "fd cb __ c4", "fd cb __ c5", "fd cb __ c6", "fd cb __ c7",
+        "fd cb __ c8", "fd cb __ c9", "fd cb __ ca", "fd cb __ cb", "fd cb __ cc", "fd cb __ cd", "fd cb __ ce", "fd cb __ cf",
+        "fd cb __ d0", "fd cb __ d1", "fd cb __ d2", "fd cb __ d3", "fd cb __ d4", "fd cb __ d5", "fd cb __ d6", "fd cb __ d7",
+        "fd cb __ d8", "fd cb __ d9", "fd cb __ da", "fd cb __ db", "fd cb __ dc", "fd cb __ fd", "fd cb __ de", "fd cb __ df",
+        "fd cb __ e0", "fd cb __ e1", "fd cb __ e2", "fd cb __ e3", "fd cb __ e4", "fd cb __ e5", "fd cb __ e6", "fd cb __ e7",
+        "fd cb __ e8", "fd cb __ e9", "fd cb __ ea", "fd cb __ eb", "fd cb __ ec", "fd cb __ ed", "fd cb __ ee", "fd cb __ ef",
+        "fd cb __ f0", "fd cb __ f1", "fd cb __ f2", "fd cb __ f3", "fd cb __ f4", "fd cb __ f5", "fd cb __ f6", "fd cb __ f7",
+        "fd cb __ f8", "fd cb __ f9", "fd cb __ fa", "fd cb __ fb", "fd cb __ fc", "fd cb __ fd", "fd cb __ fe", "fd cb __ ff",
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -497,7 +566,7 @@ test "SingleStepTests/z80" {
 
         for (tests[1..], 0..) |t, i| {
             const s = try t.toZ80State(allocator);
-            defer s.free(allocator);
+            defer s.deinit(allocator);
 
             const opcode = op.fetchOpcode(s);
             op.exec(s, opcode);

@@ -205,7 +205,7 @@ pub const Z80State = packed struct {
 
     const Self = @This();
 
-    pub fn create(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator) !*Self {
         var state = try allocator.create(Self);
         state.gp_registers = @ptrCast(state);
         state.gp_registers_pairs = @ptrCast(state);
@@ -216,7 +216,7 @@ pub const Z80State = packed struct {
         return state;
     }
 
-    pub fn free(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         const buff: []u8 = self.memory[0..self.memory_len];
         allocator.free(buff);
         allocator.destroy(self);

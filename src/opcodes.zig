@@ -556,7 +556,7 @@ pub fn inc_dec_xy(state: *Z80State, opcode: *const OpCode) u8 {
     return 10;
 }
 
-pub fn ij_prefix(state: *Z80State, _: *const OpCode) u8 {
+pub fn xy_prefix(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     const opcode_int = fetchOpcode(state);
     const opcode: OpCode = @bitCast(opcode_int);
@@ -566,12 +566,12 @@ pub fn ij_prefix(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn dd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IX;
-    return ij_prefix(state, opcode);
+    return xy_prefix(state, opcode);
 }
 
 pub fn fd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IY;
-    return ij_prefix(state, opcode);
+    return xy_prefix(state, opcode);
 }
 
 pub fn ed_prefix(state: *Z80State, _: *const OpCode) u8 {
@@ -587,6 +587,14 @@ pub fn cb_prefix(state: *Z80State, _: *const OpCode) u8 {
     const opcode_int = fetchOpcode(state);
     const opcode: OpCode = @bitCast(opcode_int);
     const insn_func = cb_instructions_table[opcode_int];
+    return insn_func(state, &opcode);
+}
+
+pub fn xy_cb_prefix(state: *Z80State, _: *const OpCode) u8 {
+    state.PC +%= 1;
+    const opcode_int = state.memory[state.PC +% 1];
+    const opcode: OpCode = @bitCast(opcode_int);
+    const insn_func = xy_cb_instructions_table[opcode_int];
     return insn_func(state, &opcode);
 }
 
@@ -924,58 +932,46 @@ pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
     return 23;
 }
 
-pub fn rot_r(state: *Z80State, opcode: *const OpCode) u8 {
-    const value = state.gp_registers[opcode.z];
-    var res: u8 = 0;
+pub inline fn rot_x(state: *Z80State, opcode: *const OpCode, value: u8) u8 {
     var cf: u8 = 0;
-    var cycles: u8 = 0;
+    var res: u8 = 0;
 
     switch (opcode.y) {
         0 => { // RLC
             res = std.math.rotl(u8, value, 1);
             cf = res & CF;
-            cycles = 8;
         },
         1 => { // RRC
             cf = value & CF;
             res = std.math.rotr(u8, value, 1);
-            cycles = 8;
         },
         2 => { // RL
             cf = value & 128;
             const f: u8 = state.AF.getFlags() & CF;
             res = (value << 1) | f;
-            cycles = 8;
         },
         3 => { // RR
             cf = value & CF;
             const f: u8 = state.AF.getFlags() & CF;
             res = (value >> 1) | (f << 7);
-            cycles = 8;
         },
         4 => { // SLA
             cf = value >> 7;
             res = value << 1;
-            cycles = 8;
         },
         5 => { // SRA
             cf = value & CF;
             res = (value & 128) | (value >> 1);
-            cycles = 8;
         },
         6 => { // SLL
             cf = value >> 7;
             res = (value << 1) | CF;
-            cycles = 8;
         },
         7 => { // SRL
             cf = value & CF;
             res = value >> 1;
-            cycles = 8;
         },
     }
-
-    state.gp_registers[opcode.z] = res;
 
     state.AF.F.N = false;
     state.AF.F.H = false;
@@ -986,8 +982,49 @@ pub fn rot_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.AF.F.X = res & XF != 0;
     state.AF.F.Y = res & YF != 0;
 
+    return res;
+}
+
+pub fn rot_r(state: *Z80State, opcode: *const OpCode) u8 {
+    const value = state.gp_registers[opcode.z];
+    const res = rot_x(state, opcode, value);
+    state.gp_registers[opcode.z] = res;
     state.PC +%= 1;
-    return cycles;
+    return 8;
+}
+
+pub fn rot_hl(state: *Z80State, opcode: *const OpCode) u8 {
+    const hl = @intFromEnum(RegisterPairs.HL);
+    const value = readIndirect(state, hl);
+    const res = rot_x(state, opcode, value);
+    storeIndirect(state, res, hl);
+    state.PC +%= 1;
+    return 15;
+}
+
+// see: "z80-undocumented" 3.5 DDCB Prefix.
+pub fn rot_xy(state: *Z80State, opcode: *const OpCode) u8 {
+    const value = readIndexed(state, 0);
+    const res = rot_x(state, opcode, value);
+    storeIndexed(state, res, 0);
+    // undocumented (DD|FD)CB instructions that also store the result in
+    // an additional register r (B,C,D,E,H,L or A) specified in the last 3 bits of the opcode.
+    // opcode.z == 6 is for the documented instructions.
+    // For the undocumented ones: [d] [opcode] where opcode.z != 6.
+    // opcode.z:
+    //  000 B
+    //  001 C
+    //  010 D
+    //  011 E
+    //  100 H
+    //  101 L
+    //  110 (none: documented opcode)
+    //  111
+    if (opcode.z != 6) {
+        state.gp_registers[opcode.z] = res;
+    }
+    state.PC +%= 2;
+    return 23;
 }
 
 pub fn rlca(state: *Z80State, _: *const OpCode) u8 {
@@ -1074,6 +1111,46 @@ pub fn bit_r(state: *Z80State, opcode: *const OpCode) u8 {
     return 8;
 }
 
+pub fn bit_xy(state: *Z80State, opcode: *const OpCode) u8 {
+    const n = opcode.y; // what bit to test, res or set
+    const r = readIndexed(state, 0);
+    var cycles: u8 = 0;
+
+    switch (opcode.x) {
+        1 => { // BIT
+            const b = (r >> n) & 1;
+            state.AF.F.S = b != 0 and n == 7;
+            state.AF.F.Z = b == 0;
+            state.AF.F.H = true;
+            state.AF.F.N = false;
+            state.AF.F.PV = state.AF.F.Z;
+            state.AF.F.X = state.WZ.high & XF != 0;
+            state.AF.F.Y = state.WZ.high & YF != 0;
+            cycles = 20;
+        },
+        2 => { // RES
+            const res = r & ~(@as(u8, 1) << n);
+            storeIndexed(state, res, 0);
+            if (opcode.z != 6) {
+                state.gp_registers[opcode.z] = res;
+            }
+            cycles = 23;
+        },
+        3 => { // SET
+            const res = r | @as(u8, 1) << n;
+            storeIndexed(state, res, 0);
+            if (opcode.z != 6) {
+                state.gp_registers[opcode.z] = res;
+            }
+            cycles = 23;
+        },
+        else => {},
+    }
+
+    state.PC +%= 2;
+    return cycles;
+}
+
 pub fn bit_hl(state: *Z80State, opcode: *const OpCode) u8 {
     const n = opcode.y; // what bit to test, res or set
     const hl = @intFromEnum(RegisterPairs.HL);
@@ -1147,7 +1224,7 @@ const xy_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // 9
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // A
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, xy_cb_prefix, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
     undefined, undefined, undefined, be_ex_sp_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // F
@@ -1175,11 +1252,11 @@ const ed_instructions_table = [256]InstructionFn{
 };
 
 const cb_instructions_table = [256]InstructionFn{
-    //  0     1      2     3      4       5       6        7        8      9    A      B      C      D       E          F
-    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 0
-    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 1
-    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 2
-    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, undefined, rot_r, // 3
+    //  0      1      2      3      4      5       6      7      8      9      A      B      C      D       E      F
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 0
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 1
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 2
+    rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 3
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 4
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 5
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // 6
@@ -1192,6 +1269,27 @@ const cb_instructions_table = [256]InstructionFn{
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // D
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // E
     bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_r, bit_hl, bit_r, // F
+};
+
+// DDCBx or FDCBx
+const xy_cb_instructions_table = [256]InstructionFn{
+    //   0       1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
+    rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 0
+    rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 1
+    rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 2
+    rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 3
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 4
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 5
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 6
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 7
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 8
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // 9
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // A
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // B
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // C
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // D
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // E
+    bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, bit_xy, // F
 };
 
 pub inline fn fetchOpcode(state: *Z80State) u8 {
