@@ -15,11 +15,17 @@ pub const SixteenBitRegister = packed struct {
     }
 
     pub inline fn increment(self: *SixteenBitRegister) void {
-        self.setValue(self.getValue() +% 1);
+        const r = @addWithOverflow(self.low, 1);
+        const carry = r[1];
+        self.low = r[0];
+        self.high +%= carry;
     }
 
     pub inline fn decrement(self: *SixteenBitRegister) void {
-        self.setValue(self.getValue() -% 1);
+        const r = @subWithOverflow(self.low, 1);
+        const borrow = r[1];
+        self.low = r[0];
+        self.high -%= borrow;
     }
 
     pub inline fn setLow(self: *SixteenBitRegister, value: u8) void {

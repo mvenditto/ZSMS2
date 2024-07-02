@@ -182,27 +182,17 @@ test "Flags register set/get" {
 }
 
 test "16 bit register inc/dec" {
-    var r = cpu.SixteenBitRegister{
-        .high = 222,
-        .low = 233,
-    };
-
-    const exp = r.getValue() +% 1;
-
-    r.increment();
-
-    try expectEquals(exp, r.getValue());
-
-    var r2 = cpu.SixteenBitRegister{
-        .high = 222,
-        .low = 233,
-    };
-
-    const exp2 = r2.getValue() -% 1;
-
-    r2.decrement();
-
-    try expectEquals(exp2, r2.getValue());
+    for (0..65536) |i| {
+        const value: u16 = @truncate(i);
+        var r = cpu.SixteenBitRegister{};
+        r.setValue(value);
+        try expectEquals(value, r.getValue());
+        r.increment();
+        try expectEquals(value +% 1, r.getValue());
+        r.setValue(value);
+        r.decrement();
+        try expectEquals(value -% 1, r.getValue());
+    }
 }
 
 test "16 bit register" {
@@ -540,6 +530,12 @@ test "SingleStepTests/z80" {
         "fd cb __ e8", "fd cb __ e9", "fd cb __ ea", "fd cb __ eb", "fd cb __ ec", "fd cb __ ed", "fd cb __ ee", "fd cb __ ef",
         "fd cb __ f0", "fd cb __ f1", "fd cb __ f2", "fd cb __ f3", "fd cb __ f4", "fd cb __ f5", "fd cb __ f6", "fd cb __ f7",
         "fd cb __ f8", "fd cb __ f9", "fd cb __ fa", "fd cb __ fb", "fd cb __ fc", "fd cb __ fd", "fd cb __ fe", "fd cb __ ff",
+        "c3", // JP nn
+        "18", "20", "28", "38", "30", // JP e
+        "c2", "3a", "72", "7a", "e2", "ea", "f2", "fa", // JP cc, nn
+        "e9", // JP (HL)
+        "dd e9", "fd e9", // JP (IX|IY)
+        "10", // DJNZ
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

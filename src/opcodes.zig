@@ -37,10 +37,12 @@ pub const OpCode = packed struct {
 // See also: https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags
 //
 const SF = 128;
+const ZF = 64;
 const YF = 32;
 const HF = 16;
 const XF = 8;
 const PVF = 4;
+const NF = 2;
 const CF = 1;
 
 const InstructionFn = *const fn (*Z80State, *const OpCode) u8;
@@ -1189,12 +1191,128 @@ pub fn bit_hl(state: *Z80State, opcode: *const OpCode) u8 {
     return cycles;
 }
 
+// cc    Condition           Flag
+//
+// 000   Non-Zero (NZ)       Z
+// 001   Zero (Z)            Z
+// 010   No Carry (NC)       C
+// 011   Carry (C)           C
+// 100   Parity Odd (PO)     P/V
+// 101   Parity Even (PE)    P/V
+// 110   Sign Positive (P)   S
+// 111   Sign Negative (M)   S
+// where cc = opcode.y
+pub const JumpConditions = enum(u3) {
+    non_zero = 0,
+    zero = 1,
+    no_carry = 2,
+    carry = 3,
+    parity_odd = 4,
+    parity_even = 5,
+    sign_positive = 6,
+    sign_negative = 7,
+};
+
+pub inline fn evalJumpCondition(state: *const Z80State, condition: u3) bool {
+    const cc: JumpConditions = @enumFromInt(condition);
+    const flags = state.AF.F;
+
+    return switch (cc) {
+        .non_zero => !flags.Z,
+        .zero => flags.Z,
+        .no_carry => !flags.C,
+        .carry => flags.C,
+        .parity_odd => !flags.PV,
+        .parity_even => flags.PV,
+        .sign_positive => !flags.S,
+        .sign_negative => flags.S,
+    };
+}
+
+pub fn jp_nn(state: *Z80State, _: *const OpCode) u8 {
+    const low = state.memory[state.PC +% 1];
+    const high = state.memory[state.PC +% 2];
+    const nn: u16 = @intCast(low | @as(u16, high) << 8);
+    state.PC = nn;
+    state.WZ.low = low;
+    state.WZ.high = high;
+    return 10;
+}
+
+pub fn jp_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
+    const low = state.memory[state.PC +% 1];
+    const high = state.memory[state.PC +% 2];
+    const nn: u16 = @intCast(low | @as(u16, high) << 8);
+    state.WZ.low = low;
+    state.WZ.high = high;
+
+    if (evalJumpCondition(state, opcode.y)) {
+        state.PC = nn;
+        return 10;
+    }
+
+    state.PC +%= 3;
+    return 10;
+}
+
+pub fn jr_e(state: *Z80State, _: *const OpCode) u8 {
+    // NOTE: e actually is e - 2
+    const pc: i32 = @intCast(state.PC);
+    const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+    const address: u16 = @intCast(@mod(pc + e + 2, 65536));
+    state.PC = address;
+    state.WZ.setValue(address);
+    return 12;
+}
+
+pub fn jr_ss_e(state: *Z80State, opcode: *const OpCode) u8 {
+    // opcode.y = 1ss where ss = cc.
+    if (evalJumpCondition(state, opcode.y & 0b011)) {
+        const pc: i32 = @intCast(state.PC);
+        const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+        const address: u16 = @intCast(@mod(pc + e + 2, 65536));
+        state.PC = address;
+        state.WZ.setValue(address);
+        return 12;
+    }
+
+    state.PC +%= 2;
+    return 7;
+}
+
+pub fn djnz(state: *Z80State, _: *const OpCode) u8 {
+    const b_dec = state.BC.high -% 1;
+    state.BC.high = b_dec;
+
+    if (b_dec != 0) {
+        const pc: i32 = @intCast(state.PC);
+        const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+        const address: u16 = @intCast(@mod(pc + e + 2, 65536));
+        state.PC = address;
+        state.WZ.setValue(address);
+        return 13;
+    }
+
+    state.PC +%= 2;
+    return 8;
+}
+
+pub fn jp_hl(state: *Z80State, _: *const OpCode) u8 {
+    state.PC = state.HL.getValue();
+    return 4;
+}
+
+pub fn jp_xy(state: *Z80State, _: *const OpCode) u8 {
+    state.PC = state.addr_register.getValue();
+    return 8;
+}
+
 const instructions_table = [256]InstructionFn{
     //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
     undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rlca, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rrca, // 0
-    undefined, undefined, ld_de_a, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rla, undefined, add_hl_de, ld_a_de, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rra, // 1
-    undefined, undefined, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, undefined, add_hl_hl, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
-    undefined, undefined, ld_nn_a, inc_dec_sp, al2_a_hl, al2_a_hl, ld_hl_n, undefined, undefined, add_hl_sp, ld_a_nn, inc_dec_sp, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
+    djnz, undefined, ld_de_a, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rla, jr_e, add_hl_de, ld_a_de, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rra, // 1
+    jr_ss_e, undefined, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, jr_ss_e, add_hl_hl, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
+    jr_ss_e, undefined, ld_nn_a, inc_dec_sp, al2_a_hl, al2_a_hl, ld_hl_n, undefined, jr_ss_e, add_hl_sp, ld_a_nn, inc_dec_sp, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 4
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 5
     ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 6
@@ -1203,10 +1321,10 @@ const instructions_table = [256]InstructionFn{
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // 9
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // A
     al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, cb_prefix, undefined, undefined, al_a_n, undefined, // C
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, be_exx, undefined, undefined, undefined, dd_prefix, al_a_n, undefined, // D
-    undefined, undefined, undefined, be_ex_sp_hl, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, be_ex_de_hl, undefined, ed_prefix, al_a_n, undefined, // E
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, undefined, undefined, undefined, fd_prefix, al_a_n, undefined, // F
+    undefined, undefined, jp_cc_nn, jp_nn, undefined, undefined, al_a_n, undefined, undefined, undefined, jp_cc_nn, cb_prefix, undefined, undefined, al_a_n, undefined, // C
+    undefined, undefined, jp_cc_nn, undefined, undefined, undefined, al_a_n, undefined, undefined, be_exx, jp_cc_nn, undefined, undefined, dd_prefix, al_a_n, undefined, // D
+    undefined, undefined, jp_cc_nn, be_ex_sp_hl, undefined, undefined, al_a_n, undefined, undefined, jp_hl, jp_cc_nn, be_ex_de_hl, undefined, ed_prefix, al_a_n, undefined, // E
+    undefined, undefined, jp_cc_nn, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, jp_cc_nn, undefined, undefined, fd_prefix, al_a_n, undefined, // F
 };
 
 // Indexed addressing XY opcodes
@@ -1226,7 +1344,7 @@ const xy_instructions_table = [256]InstructionFn{
     undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // B
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, xy_cb_prefix, undefined, undefined, undefined, undefined, // C
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
-    undefined, undefined, undefined, be_ex_sp_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
+    undefined, undefined, undefined, be_ex_sp_xy, undefined, undefined, undefined, undefined, undefined, jp_xy, undefined, undefined, undefined, undefined, undefined, undefined, // E
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // F
 };
 
