@@ -177,6 +177,11 @@ pub fn ed_illegal(_: *Z80State, opcode: *const OpCode) u8 {
     return 0;
 }
 
+pub fn xy_illegal(_: *Z80State, opcode: *const OpCode) u8 {
+    std.debug.panic("PANIC: Illegal opcode: (DD|FD) {x}\n", .{@as(u8, @bitCast(opcode.*))});
+    return 0;
+}
+
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
     const t = s.AF.A +% rhs; // +% = wrapping addition
     s.AF.F.N = false;
@@ -326,6 +331,26 @@ pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opco
         inline .indexed => 19,
         else => 4,
     };
+}
+
+pub fn al_a_p(state: *Z80State, opcode: *const OpCode) u8 {
+    const registers: *[7]*u8 = if (state.memory[state.PC -% 1] == 0xdd) state.p else state.q;
+    const rhs = registers[opcode.z].*;
+
+    state.PC +%= 1;
+
+    switch (opcode.y) {
+        0 => add_a_x(state, rhs), // ADD A,
+        1 => adc_a_x(state, rhs), // ADC A,
+        2 => sub_a_x(state, rhs), // SUB A,
+        3 => sbc_a_x(state, rhs), // SBC A,
+        4 => and_a_x(state, rhs), // AND A,
+        5 => xor_a_x(state, rhs), // XOR A,
+        6 => or_a_x(state, rhs), //   OR A,
+        7 => cp_a_x(state, rhs), //   CP A,
+    }
+
+    return 8;
 }
 
 pub inline fn al2_a_x(comptime addressing: AddressingMode, state: *Z80State, opcode: *const OpCode) u8 {
@@ -1728,23 +1753,23 @@ const instructions_table = [256]InstructionFn{
 // Indexed addressing XY opcodes
 // zig fmt: off
 const xy_instructions_table = [256]InstructionFn{
-    //0        1          2             3            4          5          6          7          8          9          A              B            C          D             E          F
-    nop_nop,   undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, add_xy_bc, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 0
-    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, add_xy_de, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 1
-    undefined, ld_xy_nn,  ld_nn_xy_ext, inc_dec_xy,  undefined, undefined, undefined, undefined, undefined, add_xy_ix, ld_xy_nn_ext, inc_dec_xy,   undefined, undefined,    undefined, undefined, // 2
-    undefined, undefined, undefined,    undefined,   al2_a_xy,  al2_a_xy,  ld_xy_n,   undefined, undefined, add_xy_sp, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 3
-    nop,       undefined, undefined,    undefined,   ld_p_xyh,  ld_p_xyl,  ld_r_xy,   undefined, undefined, nop,       undefined,    undefined,    ld_p_xyh,  ld_p_xyl,     ld_r_xy,   undefined, // 4
-    undefined, undefined, nop,          undefined,   ld_p_xyh,  ld_p_xyl,  ld_r_xy,   undefined, undefined, undefined, undefined,    nop,          ld_p_xyh,  ld_p_xyl,     ld_r_xy,   undefined, // 5
-    ld_xyh_p,  ld_xyh_p,  ld_xyh_p,     ld_xyh_p,    nop,       undefined, ld_r_xy,   ld_xyh_p,  ld_xyl_p,  ld_xyl_p,  ld_xyl_p,     ld_xyl_p,     undefined, nop,          ld_r_xy,   ld_xyl_p,  // 6
-    ld_xy_r,   ld_xy_r,   ld_xy_r,      ld_xy_r,     ld_xy_r,   ld_xy_r,   undefined, ld_xy_r,   undefined, undefined, undefined,    undefined,    ld_p_xyh,  ld_p_xyl,     ld_r_xy,   nop,       // 7
-    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // 8
-    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // 9
-    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // A
-    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // B
-    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    xy_cb_prefix, undefined, undefined,    undefined, undefined, // C
-    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    undefined, undefined, // D
-    undefined, pop_xy,    undefined,    be_ex_sp_xy, undefined, push_xy,   undefined, undefined, undefined, jp_xy,     undefined,    undefined,    undefined, undefined,    undefined, undefined, // E
-    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, ld_sp_xy,  undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // F
+    //0         1            2             3            4           5           6           7           8           9           A             B             C           D           E           F
+    nop_nop,    xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,  undefined,  undefined,  xy_illegal, add_xy_bc,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 0
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,  undefined,  undefined,  xy_illegal, add_xy_de,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 1
+    xy_illegal, ld_xy_nn,   ld_nn_xy_ext, inc_dec_xy,  undefined,  undefined,  undefined,  undefined,  undefined,  add_xy_ix,  ld_xy_nn_ext, inc_dec_xy,   undefined,  undefined,  undefined,  xy_illegal, // 2
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_xy,   al2_a_xy,   ld_xy_n,    undefined,  undefined,  add_xy_sp,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 3
+    nop_nop,    undefined,  undefined,    undefined,   ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  undefined,  nop_nop,    undefined,    undefined,    ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  // 4
+    undefined,  undefined,  nop_nop,      undefined,   ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  undefined,  undefined,  undefined,    nop_nop,      ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  // 5
+    ld_xyh_p,   ld_xyh_p,   ld_xyh_p,     ld_xyh_p,    nop_nop,    undefined,  ld_r_xy,    ld_xyh_p,   ld_xyl_p,   ld_xyl_p,   ld_xyl_p,     ld_xyl_p,     undefined,  nop_nop,    ld_r_xy,    ld_xyl_p,   // 6
+    ld_xy_r,    ld_xy_r,    ld_xy_r,      ld_xy_r,     ld_xy_r,    ld_xy_r,    xy_illegal, ld_xy_r,    undefined,  undefined,  undefined,    undefined,    ld_p_xyh,   ld_p_xyl,   ld_r_xy,    nop_nop,    // 7
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // 8
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // 9
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // A
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // B
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_cb_prefix, xy_illegal, xy_illegal, xy_illegal, xy_illegal, // C
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_illegal,   xy_illegal, undefined,  xy_illegal, xy_illegal, // D
+    xy_illegal, pop_xy,     xy_illegal,   be_ex_sp_xy, xy_illegal, push_xy,    xy_illegal, xy_illegal, xy_illegal, jp_xy,      xy_illegal,   xy_illegal,   xy_illegal, xy_illegal, xy_illegal, xy_illegal, // E
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, ld_sp_xy,   xy_illegal,   xy_illegal,   xy_illegal, undefined,  xy_illegal, xy_illegal, // F
 };
 
 // zig fmt: off
