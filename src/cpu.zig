@@ -81,11 +81,11 @@ pub const AccumulatorFlagsRegister = packed struct {
     F: FlagsRegister = .{},
     A: u8 = 0,
 
-    pub fn getFlags(self: *const AccumulatorFlagsRegister) u8 {
+    pub inline fn getFlags(self: *const AccumulatorFlagsRegister) u8 {
         return @bitCast(self.F);
     }
 
-    pub fn setFlags(self: *AccumulatorFlagsRegister, flags: u8) void {
+    pub inline fn setFlags(self: *AccumulatorFlagsRegister, flags: u8) void {
         self.F = @bitCast(flags);
     }
 
@@ -186,9 +186,34 @@ pub const Z80State = packed struct {
     // The MEMPTR, see: https://zx-pk.ru/attachment.php?attachmentid=2989
     WZ: SixteenBitRegister = .{}, // aka MEMPTR
 
+    // Index: B,C,D,E,IXh,IXl,A
+    _p0: *u8 = undefined, // B
+    _p1: *u8 = undefined, // C
+    _p2: *u8 = undefined, // D
+    _p3: *u8 = undefined, // E
+    _p4: *u8 = undefined, // IXh
+    _p5: *u8 = undefined, // IXl
+    _p6: *u8 = undefined, // A
+
+    // Index: B,C,D,E,IYh,IYl,A
+    _q0: *u8 = undefined, // B
+    _q1: *u8 = undefined, // C
+    _q2: *u8 = undefined, // D
+    _q3: *u8 = undefined, // E
+    _q4: *u8 = undefined, // IYh
+    _q5: *u8 = undefined, // IYl
+    _q6: *u8 = undefined, // A
+
+    // Index: BC,DE,HL,SP
+    _d0: *SixteenBitRegister = undefined, // B
+    _d1: *SixteenBitRegister = undefined, // C
+    _d2: *SixteenBitRegister = undefined, // D
+    _d3: *SixteenBitRegister = undefined, // E
+
     PC: u16 = 0, // program counter
     R: MemoryRefreshRegister = .{}, // memory refresh
     I: u8 = 0, // interrupt page address (high-order byte)
+    IM: u8 = 0,
 
     // Interrupt Enable Flip-Flops
     IFF1: bool = false, // Disables interrupts from being accepted
@@ -202,6 +227,11 @@ pub const Z80State = packed struct {
     // indexing over the 8 16-bit registers
     gp_registers_pairs: *[4]SixteenBitRegister = undefined,
 
+    // Other register indexes
+    p: *[7]*u8 = undefined, // B,C,D,E,IXh,IXl,A
+    q: *[7]*u8 = undefined, // B,C,D,E,IYh,IYl,A
+    d: *[4]*SixteenBitRegister = undefined, // BC,DE,HL,SP
+
     // memory
     memory: [*]u8 = undefined,
     memory_len: usize,
@@ -213,12 +243,52 @@ pub const Z80State = packed struct {
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         var state = try allocator.create(Self);
+
+        // registers
         state.gp_registers = @ptrCast(state);
         state.gp_registers_pairs = @ptrCast(state);
+
+        // memory
         const buff = try allocator.alloc(u8, 64 * 1024); // 64KB
         state.memory_len = buff.len;
         state.memory = buff.ptr;
         state.cycles = 0;
+
+        // register sets (indexers)
+        state._p0 = &state.BC.high;
+        state._p1 = &state.BC.low;
+        state._p2 = &state.DE.high;
+        state._p3 = &state.DE.low;
+        state._p4 = &state.IX.high;
+        state._p5 = &state.IX.low;
+        state._p6 = &state.AF.A;
+
+        state._q0 = &state.BC.high;
+        state._q1 = &state.BC.low;
+        state._q2 = &state.DE.high;
+        state._q3 = &state.DE.low;
+        state._q4 = &state.IY.high;
+        state._q5 = &state.IY.low;
+        state._q6 = &state.AF.A;
+
+        state._d0 = &state.BC;
+        state._d1 = &state.DE;
+        state._d2 = &state.HL;
+        state._d3 = &state.SP;
+
+        const indexed: [*]*u8 = @ptrCast(state);
+
+        const p_start = @offsetOf(Self, "_p0") / @sizeOf(*u8);
+        state.p = indexed[p_start .. p_start + 7];
+
+        const q_start = @offsetOf(Self, "_q0") / @sizeOf(*u8);
+        state.q = indexed[q_start .. q_start + 7];
+
+        const indexed2: [*]*SixteenBitRegister = @ptrCast(state);
+
+        const d_start = @offsetOf(Self, "_d0") / @sizeOf(*u8);
+        state.d = indexed2[d_start .. d_start + 4];
+
         return state;
     }
 

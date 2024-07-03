@@ -59,16 +59,6 @@ const OpcodeTest = struct {
         try expectEquals(final.sp, s.SP.getValue());
         try expectEquals(final.pc, s.PC);
 
-        expectEquals(final.f, s.AF.getFlags()) catch |err| {
-            const exp_flags: cpu.FlagsRegister = @bitCast(final.f);
-            std.debug.print("Flags mismatch:\n  expected 0b{b:0>8} {any},\n  found    0b{b:0>8} {any}\n", .{
-                final.f,         exp_flags,
-                s.AF.getFlags(), s.AF.F,
-            });
-            std.debug.print("Context:\n  initial {any},\n  final {any}\n", .{ self.initial, self.final });
-            return err;
-        };
-
         try expectEquals(final.ix, s.IX.getValue());
         try expectEquals(final.iy, s.IY.getValue());
         try expectEquals(final.i, s.I);
@@ -88,6 +78,16 @@ const OpcodeTest = struct {
             const value: u8 = @truncate(loc[1]);
             try expectEquals(value, s.memory[address]);
         }
+
+        expectEquals(final.f, s.AF.getFlags()) catch |err| {
+            const exp_flags: cpu.FlagsRegister = @bitCast(final.f);
+            std.debug.print("Flags mismatch:\n  expected 0b{b:0>8} {any},\n  found    0b{b:0>8} {any}\n", .{
+                final.f,         exp_flags,
+                s.AF.getFlags(), s.AF.F,
+            });
+            std.debug.print("Context:\n  initial {any},\n  final {any}\n", .{ self.initial, self.final });
+            return err;
+        };
     }
 };
 
@@ -109,6 +109,24 @@ pub fn printError(
         },
     };
     std.debug.print("{s}:\nTRACE:\n{any}\n", .{ msg, trace });
+}
+
+test "xz" {
+    var s = try cpu.Z80State.init(std.heap.page_allocator);
+    s.BC.high = 10;
+    s.BC.low = 11;
+    s.DE.high = 12;
+    s.DE.low = 13;
+    s.IX.high = 14;
+    s.IX.low = 15;
+    s.AF.A = 16;
+    s.addr_register = &s.IX;
+
+    std.debug.print("l={d} h={d}\n", .{ s.IX.low, s.IX.high });
+
+    for (s.p, 0..) |p, i| {
+        std.debug.print("[{d}] : {d}\n", .{ i, p.* });
+    }
 }
 
 test "mem swap" {
@@ -401,6 +419,7 @@ test "SingleStepTests/z80" {
     const op = @import("opcodes.zig");
 
     const opcodes_to_test = [_][]const u8{
+        "00", "dd 00", "fd 00", // nop
         // 8-bit Arithment and Logical group
         "87", "80", "81", "82", "83", "84", "85", "86", "dd 86", "fd 86", "c6", // ADD A,
         "8F", "88", "89", "8A", "8B", "8C", "8D", "8E", "dd 8E", "fd 8E", "ce", // ADC A,
@@ -412,7 +431,6 @@ test "SingleStepTests/z80" {
         "BF", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "dd BE", "fd BE", "fe", // CP A,
         "3C", "04", "0C", "14", "1C", "24", "2C", "34", "dd 34", "fd 34", // INC A,
         "3D", "05", "0D", "15", "1D", "25", "2D", "35", "dd 35", "fd 35", // DEC A,
-        // Load group
         "ed 57", "ed 5F", "7F", "78", "79", "7A", "7B", "dd 7e", "fd 7e", "7C", "7D", "7E", "0A", "1A", "3A", "3E", // LD A,r + LD A,(HL|BC|DE)
         "47", "40", "41", "42", "43", "44", "45", "46", "dd 46", "fd 46", "06", // LD B,r
         "4F", "48", "49", "4A", "4B", "4C", "4D", "4E", "dd 4e", "fd 4e", "0e", // LD C,r
@@ -423,6 +441,11 @@ test "SingleStepTests/z80" {
         "ed 47", "ed 4f", "32", // LD I,A - LD R,A
         "77", "70", "71", "72", "73", "74", "75", "36", // LD (HL),r
         "02", "12", // LD (BC|DE),A
+        // Undocumented LD p,p'
+        "dd 44", "dd 45", "dd 4C", "dd 4D", "dd 54", "dd 55", "dd 5C", "dd 5D", "dd 7C", "dd 7D", //
+        "dd 60", "dd 68", "dd 61", "dd 69", "dd 62", "dd 6A", "dd 63", "dd 6B", "dd 67", "dd 6F", //
+        "fd 44", "fd 45", "fd 4C", "fd 4D", "fd 54", "fd 55", "fd 5C", "fd 5D", "fd 7C", "fd 7D", //
+        "fd 60", "fd 68", "fd 61", "fd 69", "fd 62", "fd 6A", "fd 63", "fd 6B", "fd 67", "fd 6F", //
         "dd 77", "dd 70", "dd 71", "dd 72", "dd 73", "dd 74", "dd 75", "dd 36", "fd 36", // LD(IX|IY+d),r
         // Block Transfer Group
         "ED A0", "ED B0", "ED A8", "ED B8", // LDI,LDIR,LDIR,LDDR
@@ -536,6 +559,28 @@ test "SingleStepTests/z80" {
         "e9", // JP (HL)
         "dd e9", "fd e9", // JP (IX|IY)
         "10", // DJNZ
+        // 16 bit Load group
+        "01", "11", "21", "31", "dd 21", "fd 21", // LD dd,nn
+        "ed 4b", "ed 5b", "ed 6b", "ed 7b", // LD dd,(nn)
+        "2A", // LD HL,(nn)
+        "dd 2A", "fd 2A", // LD (IX|IY),(nn)
+        "22", // LD (nn),HL
+        "ed 43", "ed 53", "ed 63", "ed 73", // LD (nn),dd
+        "dd 22", "fd 22", // LD (nn), IX or IY
+        "f9", "dd f9", "fd f9", // LD SP,HL - LD SP,(IX|IY)
+        "c5", "d5", "e5", "f5", // PUSH qq
+        "dd e5", "fd e5", // PUSH IX or IY
+        "c1", "d1", "e1", "f1", "dd e1", "fd e1", // POP qq, POP IX, POP IY
+        "2f", "ed 44", "ed 54", "ed 64", "ed 74", "ed 4c", "ed 5c", "ed 6c", "ed 7c", // CPL, NEG
+        // "37", "3f", // SCF, CCF: fails for XF and YF, because Q is not emulated atm.
+        "f3", "fb", // DI, EI
+        "ed 46", "ed 56", "ed 66", "ed 76", // EM0 EM1
+        "ed 4E", "ed 5E", "ed 6E", "ed 7E", // EM0 EM2
+        "27", // DAA
+        // Call return group
+        "cd", // CALL nn
+        "c4", "d4", "e4", "f4", "cc", "dc", "ec", "fc", // CALL cc,nn
+        "c9", // ret
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

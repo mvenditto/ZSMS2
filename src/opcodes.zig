@@ -1,5 +1,6 @@
 const std = @import("std");
 const processor = @import("cpu.zig");
+const byte = @import("byte.zig");
 const Z80State = processor.Z80State;
 const RegisterPairs = processor.RegisterPairs1;
 const SixteenBitRegister = processor.SixteenBitRegister;
@@ -86,6 +87,12 @@ pub inline fn readExtended(state: *Z80State, comptime offset: u8) u8 {
     return value;
 }
 
+pub inline fn readImmediateExtended(state: *const Z80State, comptime offset: u8) .{ u8, u8 } {
+    const low = state.memory[state.PC +% offset];
+    const high = state.memory[state.PC +% offset +% 1];
+    return .{ low, high };
+}
+
 pub inline fn readExtendedUpdateWZ(state: *Z80State, comptime offset: u8) u8 {
     const low = state.memory[state.PC + offset];
     const high = state.memory[state.PC + offset + 1];
@@ -148,6 +155,26 @@ pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset
     state.memory[address] = value;
     state.WZ.low = @truncate((address +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
+}
+
+pub inline fn loadImmediateExtended(state: *const Z80State, dst: *SixteenBitRegister, comptime offset: u8) void {
+    dst.low = state.memory[state.PC +% offset];
+    dst.high = state.memory[state.PC +% offset +% 1];
+}
+
+pub fn nop(s: *Z80State, _: *const OpCode) u8 {
+    s.PC +%= 1;
+    return 4;
+}
+
+pub fn nop_nop(s: *Z80State, _: *const OpCode) u8 {
+    s.PC +%= 1;
+    return 8;
+}
+
+pub fn ed_illegal(_: *Z80State, opcode: *const OpCode) u8 {
+    std.debug.panic("PANIC: Illegal opcode: ED {x}\n", .{@as(u8, @bitCast(opcode.*))});
+    return 0;
 }
 
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
@@ -606,6 +633,30 @@ pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     return 4;
 }
 
+pub fn ld_p_xyh(state: *Z80State, opcode: *const OpCode) u8 {
+    state.gp_registers[opcode.y] = state.addr_register.high;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn ld_xyh_p(state: *Z80State, opcode: *const OpCode) u8 {
+    state.addr_register.high = state.gp_registers[opcode.z];
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn ld_p_xyl(state: *Z80State, opcode: *const OpCode) u8 {
+    state.gp_registers[opcode.y] = state.addr_register.low;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn ld_xyl_p(state: *Z80State, opcode: *const OpCode) u8 {
+    state.addr_register.low = state.gp_registers[opcode.z];
+    state.PC +%= 1;
+    return 8;
+}
+
 pub fn ld_r_n(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readImmediate(state, 1);
     state.PC +%= 2;
@@ -732,6 +783,237 @@ pub fn ld_xy_n(state: *Z80State, _: *const OpCode) u8 {
     storeIndexedUpdateWZ(state, value, 1);
     state.PC +%= 3;
     return 19;
+}
+
+pub fn ld_dd_nn(state: *Z80State, opcode: *const OpCode) u8 {
+    const dd = opcode.y >> 1; // y = 0bdd0
+    loadImmediateExtended(state, state.d[dd], 1);
+    state.PC +%= 3;
+    return 10;
+}
+
+pub fn ld_xy_nn(state: *Z80State, _: *const OpCode) u8 {
+    loadImmediateExtended(state, state.addr_register, 1);
+    state.PC +%= 3;
+    return 14;
+}
+
+pub fn ld_dd_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
+    const rp = opcode.y >> 1; // y = 0bdd0
+    const dd = state.d[rp];
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    dd.low = state.memory[address];
+    const addr_next = address +% 1;
+    dd.high = state.memory[addr_next];
+    state.WZ.setValue(addr_next);
+    state.PC +%= 3;
+    return 20;
+}
+
+pub fn ld_hl_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
+    const rp = opcode.y >> 1; // y = 0bdd0
+    const dd = state.d[rp];
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    dd.low = state.memory[address];
+    const addr_next = address +% 1;
+    dd.high = state.memory[addr_next];
+    state.WZ.setValue(addr_next);
+    state.PC +%= 3;
+    return 16;
+}
+
+pub fn ld_xy_nn_ext(state: *Z80State, _: *const OpCode) u8 {
+    const dd = state.addr_register;
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    dd.low = state.memory[address];
+    const addr_next = address +% 1;
+    dd.high = state.memory[addr_next];
+    state.WZ.setValue(addr_next);
+    state.PC +%= 3;
+    return 20;
+}
+
+pub fn ld_nn_hl_ext(state: *Z80State, _: *const OpCode) u8 {
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    const address_next = address +% 1;
+    state.memory[address] = state.HL.low;
+    state.memory[address +% 1] = state.HL.high;
+    state.WZ.setValue(address_next);
+    state.PC +%= 3;
+    return 16;
+}
+
+pub fn ld_nn_dd_ext(state: *Z80State, opcode: *const OpCode) u8 {
+    const rp = opcode.y >> 1; // y = 0bdd0
+    const dd = state.d[rp];
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    const address_next = address +% 1;
+    state.memory[address] = dd.low;
+    state.memory[address +% 1] = dd.high;
+    state.WZ.setValue(address_next);
+    state.PC +%= 3;
+    return 20;
+}
+
+pub fn ld_nn_xy_ext(state: *Z80State, _: *const OpCode) u8 {
+    const dd = state.addr_register;
+    const addr_low = state.memory[state.PC +% 1];
+    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
+    const address_next = address +% 1;
+    state.memory[address] = dd.low;
+    state.memory[address +% 1] = dd.high;
+    state.WZ.setValue(address_next);
+    state.PC +%= 3;
+    return 20;
+}
+
+pub fn ld_sp_hl(state: *Z80State, _: *const OpCode) u8 {
+    state.SP.high = state.HL.high;
+    state.SP.low = state.HL.low;
+    state.PC +%= 1;
+    return 6;
+}
+
+pub fn ld_sp_xy(state: *Z80State, _: *const OpCode) u8 {
+    state.SP.high = state.addr_register.high;
+    state.SP.low = state.addr_register.low;
+    state.PC +%= 1;
+    return 10;
+}
+
+pub fn push_af(state: *Z80State, _: *const OpCode) u8 {
+    state.SP.decrement();
+    state.memory[state.SP.getValue()] = state.AF.A;
+    state.SP.decrement();
+    state.memory[state.SP.getValue()] = @bitCast(state.AF.F);
+    state.PC +%= 1;
+    return 11;
+}
+
+pub fn push_qq(state: *Z80State, opcode: *const OpCode) u8 {
+    const qq = opcode.y >> 1;
+    const rp = &state.gp_registers_pairs[qq];
+    var sp = state.SP.getValue();
+    sp -%= 1;
+    state.memory[sp] = rp.high;
+    sp -%= 1;
+    state.memory[sp] = rp.low;
+    state.SP.setValue(sp);
+    state.PC +%= 1;
+    return 11;
+}
+
+pub fn push_xy(state: *Z80State, _: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    sp -%= 1;
+    state.memory[sp] = state.addr_register.high;
+    sp -%= 1;
+    state.memory[sp] = state.addr_register.low;
+    state.SP.setValue(sp);
+    state.PC +%= 1;
+    return 15;
+}
+
+pub fn pop_af(state: *Z80State, _: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    state.AF.setFlags(state.memory[sp]);
+    sp +%= 1;
+    state.AF.A = state.memory[sp];
+    sp +%= 1;
+    state.SP.setValue(sp);
+    state.PC +%= 1;
+    return 10;
+}
+
+pub fn pop_qq(state: *Z80State, opcode: *const OpCode) u8 {
+    const qq = opcode.y >> 1;
+    var rp = &state.gp_registers_pairs[qq];
+    var sp = state.SP.getValue();
+    rp.low = state.memory[sp];
+    sp +%= 1;
+    rp.high = state.memory[sp];
+    sp +%= 1;
+    state.SP.setValue(sp);
+    state.PC +%= 1;
+    return 10;
+}
+
+pub fn pop_xy(state: *Z80State, _: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    state.addr_register.low = state.memory[sp];
+    sp +%= 1;
+    state.addr_register.high = state.memory[sp];
+    sp +%= 1;
+    state.SP.setValue(sp);
+    state.PC +%= 1;
+    return 14;
+}
+
+pub fn call_nn(state: *Z80State, _: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    const nn_low = state.memory[state.PC +% 1];
+    const nn_high = state.memory[state.PC +% 1 +% 1];
+    const nn: u16 = @intCast(nn_low | @as(u16, nn_high) << 8);
+    sp -%= 1;
+    state.PC +%= 3;
+    state.memory[sp] = @truncate((state.PC >> 8) & 0xFF);
+    sp -%= 1;
+    state.memory[sp] = @truncate(state.PC & 0xFF);
+    state.SP.setValue(sp);
+    state.PC = nn;
+    state.WZ.low = nn_low;
+    state.WZ.high = nn_high;
+    return 17;
+}
+
+pub fn call_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
+    const nn_low = state.memory[state.PC +% 1];
+    const nn_high = state.memory[state.PC +% 1 +% 1];
+    state.PC +%= 3;
+
+    if (evalFlagsCondition(state, opcode.y)) // y=ccc
+    {
+        var sp = state.SP.getValue();
+        const nn: u16 = @intCast(nn_low | @as(u16, nn_high) << 8);
+        sp -%= 1;
+        state.memory[sp] = @truncate((state.PC >> 8) & 0xFF);
+        sp -%= 1;
+        state.memory[sp] = @truncate(state.PC & 0xFF);
+        state.SP.setValue(sp);
+        state.PC = nn;
+        state.WZ.low = nn_low;
+        state.WZ.high = nn_high;
+        return 17;
+    }
+
+    state.WZ.low = nn_low;
+    state.WZ.high = nn_high;
+
+    return 10;
+}
+
+pub fn ret(state: *Z80State, _: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    const b_low = state.memory[sp];
+    sp +%= 1;
+    const b_high = state.memory[sp];
+    sp +%= 1;
+    state.SP.setValue(sp);
+    state.PC = @intCast(b_low | @as(u16, b_high) << 8);
+    state.WZ.low = b_low;
+    state.WZ.high = b_high;
+    return 10;
 }
 
 pub const IncDecOperation = enum {
@@ -1202,7 +1484,7 @@ pub fn bit_hl(state: *Z80State, opcode: *const OpCode) u8 {
 // 110   Sign Positive (P)   S
 // 111   Sign Negative (M)   S
 // where cc = opcode.y
-pub const JumpConditions = enum(u3) {
+pub const FlagConditions = enum(u3) {
     non_zero = 0,
     zero = 1,
     no_carry = 2,
@@ -1213,8 +1495,8 @@ pub const JumpConditions = enum(u3) {
     sign_negative = 7,
 };
 
-pub inline fn evalJumpCondition(state: *const Z80State, condition: u3) bool {
-    const cc: JumpConditions = @enumFromInt(condition);
+pub inline fn evalFlagsCondition(state: *const Z80State, condition: u3) bool {
+    const cc: FlagConditions = @enumFromInt(condition);
     const flags = state.AF.F;
 
     return switch (cc) {
@@ -1246,7 +1528,7 @@ pub fn jp_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
     state.WZ.low = low;
     state.WZ.high = high;
 
-    if (evalJumpCondition(state, opcode.y)) {
+    if (evalFlagsCondition(state, opcode.y)) {
         state.PC = nn;
         return 10;
     }
@@ -1267,7 +1549,7 @@ pub fn jr_e(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn jr_ss_e(state: *Z80State, opcode: *const OpCode) u8 {
     // opcode.y = 1ss where ss = cc.
-    if (evalJumpCondition(state, opcode.y & 0b011)) {
+    if (evalFlagsCondition(state, opcode.y & 0b011)) {
         const pc: i32 = @intCast(state.PC);
         const e: i8 = @bitCast(state.memory[state.PC +% 1]);
         const address: u16 = @intCast(@mod(pc + e + 2, 65536));
@@ -1307,70 +1589,188 @@ pub fn jp_xy(state: *Z80State, _: *const OpCode) u8 {
     return 8;
 }
 
+pub fn cpl(state: *Z80State, _: *const OpCode) u8 {
+    const t = ~state.AF.A;
+    state.AF.F.N = true;
+    state.AF.F.H = true;
+    state.AF.F.X = t & XF != 0;
+    state.AF.F.Y = t & YF != 0;
+    state.AF.A = t;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn neg(state: *Z80State, _: *const OpCode) u8 {
+    const acc = state.AF.A;
+    const accs: i32 = @intCast(acc);
+    const t: u8 = @intCast(@mod(-accs, 256));
+    state.AF.F.S = t & SF != 0;
+    state.AF.F.Z = t == 0;
+    state.AF.F.H = (acc ^ t) & HF != 0;
+    state.AF.F.N = true;
+    state.AF.F.PV = acc == 128; //0x80
+    state.AF.F.C = acc != 0;
+    state.AF.F.X = t & XF != 0;
+    state.AF.F.Y = t & YF != 0;
+    state.AF.A = t;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn scf(state: *Z80State, _: *const OpCode) u8 {
+    state.AF.F.C = true;
+    state.AF.F.N = false;
+    state.AF.F.H = false;
+    state.AF.F.X = state.AF.A & XF != 0;
+    state.AF.F.Y = state.AF.A & YF != 0;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn ccf(state: *Z80State, _: *const OpCode) u8 {
+    const cf = state.AF.F.C;
+    state.AF.F.C = !cf;
+    state.AF.F.H = cf;
+    state.AF.F.N = false;
+    state.AF.F.X = state.AF.A & XF != 0;
+    state.AF.F.Y = state.AF.A & YF != 0;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn di(state: *Z80State, _: *const OpCode) u8 {
+    state.IFF1 = false;
+    state.IFF2 = false;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn ei(state: *Z80State, _: *const OpCode) u8 {
+    state.IFF1 = true;
+    state.IFF2 = true;
+    state.PC +%= 1;
+    return 4;
+}
+
+pub fn im_0(state: *Z80State, _: *const OpCode) u8 {
+    state.IM = 0;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn im_1(state: *Z80State, _: *const OpCode) u8 {
+    state.IM = 1;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn im_2(state: *Z80State, _: *const OpCode) u8 {
+    state.IM = 2;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn daa(state: *Z80State, _: *const OpCode) u8 {
+    const ln = byte.getLowNibble(state.AF.A);
+
+    // low-nibble adjustment
+    var adjustment: u8 = if (state.AF.F.H or ln > 9) 0x06 else 0x00; // 0x00 or 0x06
+
+    const bcd_carry = state.AF.A > 0x99;
+    const prev_carry = state.AF.F.C;
+
+    // high-nibble adjustment needed ?
+    if (bcd_carry or prev_carry) {
+        adjustment |= 0x60; // it becomes either 0x60 or 0x66
+    }
+
+    // add or subtract the diff based on if the prev operation was an add or sub.
+    const t: u8 = switch (state.AF.F.N) { // was sub?
+        inline true => state.AF.A -% adjustment,
+        inline false => state.AF.A +% adjustment,
+    };
+
+    state.AF.F.Z = t == 0;
+    state.AF.F.S = t & SF != 0;
+    state.AF.F.X = t & XF != 0;
+    state.AF.F.Y = t & YF != 0;
+    state.AF.F.H = (state.AF.A ^ t) & HF != 0;
+    state.AF.F.PV = hasEvenParity8(t);
+    state.AF.F.C = prev_carry or bcd_carry;
+
+    state.AF.A = t;
+
+    state.PC +%= 1;
+    return 4;
+}
+
+// zig fmt: off
 const instructions_table = [256]InstructionFn{
-    //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, ld_bc_a, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rlca, be_ex_af_af2, add_hl_bc, ld_a_bc, inc_dec_bc, al2_a_r, al2_a_r, ld_r_n, rrca, // 0
-    djnz, undefined, ld_de_a, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rla, jr_e, add_hl_de, ld_a_de, inc_dec_de, al2_a_r, al2_a_r, ld_r_n, rra, // 1
-    jr_ss_e, undefined, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, jr_ss_e, add_hl_hl, undefined, inc_dec_hl, al2_a_r, al2_a_r, ld_r_n, undefined, // 2
-    jr_ss_e, undefined, ld_nn_a, inc_dec_sp, al2_a_hl, al2_a_hl, ld_hl_n, undefined, jr_ss_e, add_hl_sp, ld_a_nn, inc_dec_sp, al2_a_r, al2_a_r, ld_r_n, undefined, // 3
-    ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 4
-    ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 5
-    ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 6
-    ld_hl_r, ld_hl_r, ld_hl_r, ld_hl_r, ld_hl_r, ld_hl_r, undefined, ld_hl_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_r, ld_r_hl, ld_r_r, // 7
-    al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // 8
-    al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // 9
-    al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // A
-    al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_r, al_a_hl, al_a_r, // B
-    undefined, undefined, jp_cc_nn, jp_nn, undefined, undefined, al_a_n, undefined, undefined, undefined, jp_cc_nn, cb_prefix, undefined, undefined, al_a_n, undefined, // C
-    undefined, undefined, jp_cc_nn, undefined, undefined, undefined, al_a_n, undefined, undefined, be_exx, jp_cc_nn, undefined, undefined, dd_prefix, al_a_n, undefined, // D
-    undefined, undefined, jp_cc_nn, be_ex_sp_hl, undefined, undefined, al_a_n, undefined, undefined, jp_hl, jp_cc_nn, be_ex_de_hl, undefined, ed_prefix, al_a_n, undefined, // E
-    undefined, undefined, jp_cc_nn, undefined, undefined, undefined, al_a_n, undefined, undefined, undefined, jp_cc_nn, undefined, undefined, fd_prefix, al_a_n, undefined, // F
+    //0        1         2             3            4           5         6          7          8             9          A             B            C           D          E        F
+    nop,       ld_dd_nn, ld_bc_a,      inc_dec_bc,  al2_a_r,    al2_a_r,  ld_r_n,    rlca,      be_ex_af_af2, add_hl_bc, ld_a_bc,      inc_dec_bc,  al2_a_r,    al2_a_r,   ld_r_n,  rrca,      // 0
+    djnz,      ld_dd_nn, ld_de_a,      inc_dec_de,  al2_a_r,    al2_a_r,  ld_r_n,    rla,       jr_e,         add_hl_de, ld_a_de,      inc_dec_de,  al2_a_r,    al2_a_r,   ld_r_n,  rra,       // 1
+    jr_ss_e,   ld_dd_nn, ld_nn_hl_ext, inc_dec_hl,  al2_a_r,    al2_a_r,  ld_r_n,    daa,       jr_ss_e,      add_hl_hl, ld_hl_nn_ext, inc_dec_hl,  al2_a_r,    al2_a_r,   ld_r_n,  cpl,       // 2
+    jr_ss_e,   ld_dd_nn, ld_nn_a,      inc_dec_sp,  al2_a_hl,   al2_a_hl, ld_hl_n,   scf,       jr_ss_e,      add_hl_sp, ld_a_nn,      inc_dec_sp,  al2_a_r,    al2_a_r,   ld_r_n,  ccf,       // 3
+    nop,       ld_r_r,   ld_r_r,       ld_r_r,      ld_r_r,     ld_r_r,   ld_r_hl,   ld_r_r,    ld_r_r,       nop,       ld_r_r,       ld_r_r,      ld_r_r,     ld_r_r,    ld_r_hl, ld_r_r,    // 4
+    ld_r_r,    ld_r_r,   nop,          ld_r_r,      ld_r_r,     ld_r_r,   ld_r_hl,   ld_r_r,    ld_r_r,       ld_r_r,    ld_r_r,       nop,         ld_r_r,     ld_r_r,    ld_r_hl, ld_r_r,    // 5
+    ld_r_r,    ld_r_r,   ld_r_r,       ld_r_r,      ld_r_r,     ld_r_r,   ld_r_hl,   ld_r_r,    ld_r_r,       ld_r_r,    ld_r_r,       ld_r_r,      ld_r_r,     nop,       ld_r_hl, ld_r_r,    // 6
+    ld_hl_r,   ld_hl_r,  ld_hl_r,      ld_hl_r,     ld_hl_r,    ld_hl_r,  undefined, ld_hl_r,   ld_r_r,       ld_r_r,    ld_r_r,       ld_r_r,      ld_r_r,     ld_r_r,    ld_r_hl, nop,       // 7
+    al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // 8
+    al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // 9
+    al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // A
+    al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // B
+    undefined, pop_qq,   jp_cc_nn,     jp_nn,       call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    ret,       jp_cc_nn,     cb_prefix,   call_cc_nn, call_nn,   al_a_n,  undefined, // C
+    undefined, pop_qq,   jp_cc_nn,     undefined,   call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    be_exx,    jp_cc_nn,     undefined,   call_cc_nn, dd_prefix, al_a_n,  undefined, // D
+    undefined, pop_qq,   jp_cc_nn,     be_ex_sp_hl, call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    jp_hl,     jp_cc_nn,     be_ex_de_hl, call_cc_nn, ed_prefix, al_a_n,  undefined, // E
+    undefined, pop_af,   jp_cc_nn,     di,          call_cc_nn, push_af,  al_a_n,    undefined, undefined,    ld_sp_hl,  jp_cc_nn,     ei,          call_cc_nn, fd_prefix, al_a_n,  undefined, // F
 };
 
 // Indexed addressing XY opcodes
+// zig fmt: off
 const xy_instructions_table = [256]InstructionFn{
-    //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, add_xy_bc, undefined, undefined, undefined, undefined, undefined, undefined, // 0
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, add_xy_de, undefined, undefined, undefined, undefined, undefined, undefined, // 1
-    undefined, undefined, undefined, inc_dec_xy, undefined, undefined, undefined, undefined, undefined, add_xy_ix, undefined, inc_dec_xy, undefined, undefined, undefined, undefined, // 2
-    undefined, undefined, undefined, undefined, al2_a_xy, al2_a_xy, ld_xy_n, undefined, undefined, add_xy_sp, undefined, undefined, undefined, undefined, undefined, undefined, // 3
-    undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, // 4
-    undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, // 5
-    undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, // 6
-    ld_xy_r, ld_xy_r, ld_xy_r, ld_xy_r, ld_xy_r, ld_xy_r, undefined, ld_xy_r, undefined, undefined, undefined, undefined, undefined, undefined, ld_r_xy, undefined, // 7
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // 8
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // 9
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // A
-    undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, xy_cb_prefix, undefined, undefined, undefined, undefined, // C
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
-    undefined, undefined, undefined, be_ex_sp_xy, undefined, undefined, undefined, undefined, undefined, jp_xy, undefined, undefined, undefined, undefined, undefined, undefined, // E
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, al_a_xy, undefined, // F
+    //0        1          2             3            4          5          6          7          8          9          A              B            C          D             E          F
+    nop_nop,   undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, add_xy_bc, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 0
+    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, add_xy_de, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 1
+    undefined, ld_xy_nn,  ld_nn_xy_ext, inc_dec_xy,  undefined, undefined, undefined, undefined, undefined, add_xy_ix, ld_xy_nn_ext, inc_dec_xy,   undefined, undefined,    undefined, undefined, // 2
+    undefined, undefined, undefined,    undefined,   al2_a_xy,  al2_a_xy,  ld_xy_n,   undefined, undefined, add_xy_sp, undefined,    undefined,    undefined, undefined,    undefined, undefined, // 3
+    nop,       undefined, undefined,    undefined,   ld_p_xyh,  ld_p_xyl,  ld_r_xy,   undefined, undefined, nop,       undefined,    undefined,    ld_p_xyh,  ld_p_xyl,     ld_r_xy,   undefined, // 4
+    undefined, undefined, nop,          undefined,   ld_p_xyh,  ld_p_xyl,  ld_r_xy,   undefined, undefined, undefined, undefined,    nop,          ld_p_xyh,  ld_p_xyl,     ld_r_xy,   undefined, // 5
+    ld_xyh_p,  ld_xyh_p,  ld_xyh_p,     ld_xyh_p,    nop,       undefined, ld_r_xy,   ld_xyh_p,  ld_xyl_p,  ld_xyl_p,  ld_xyl_p,     ld_xyl_p,     undefined, nop,          ld_r_xy,   ld_xyl_p,  // 6
+    ld_xy_r,   ld_xy_r,   ld_xy_r,      ld_xy_r,     ld_xy_r,   ld_xy_r,   undefined, ld_xy_r,   undefined, undefined, undefined,    undefined,    ld_p_xyh,  ld_p_xyl,     ld_r_xy,   nop,       // 7
+    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // 8
+    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // 9
+    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // A
+    undefined, undefined, undefined,    undefined,   undefined, undefined, al_a_xy,   undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // B
+    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    xy_cb_prefix, undefined, undefined,    undefined, undefined, // C
+    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, undefined, undefined,    undefined,    undefined, undefined,    undefined, undefined, // D
+    undefined, pop_xy,    undefined,    be_ex_sp_xy, undefined, push_xy,   undefined, undefined, undefined, jp_xy,     undefined,    undefined,    undefined, undefined,    undefined, undefined, // E
+    undefined, undefined, undefined,    undefined,   undefined, undefined, undefined, undefined, undefined, ld_sp_xy,  undefined,    undefined,    undefined, undefined,    al_a_xy,   undefined, // F
 };
 
-//
+// zig fmt: off
 const ed_instructions_table = [256]InstructionFn{
-    //      0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 0
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 1
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 2
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 3
-    undefined, undefined, sbc_hl_bc, undefined, undefined, undefined, undefined, ld_i_a, undefined, undefined, adc_hl_bc, undefined, undefined, undefined, undefined, ld_r_a, // 4
-    undefined, undefined, sbc_hl_de, undefined, undefined, undefined, undefined, ld_a_i, undefined, undefined, adc_hl_de, undefined, undefined, undefined, undefined, ld_a_r, // 5
-    undefined, undefined, sbc_hl_hl, undefined, undefined, undefined, undefined, undefined, undefined, undefined, adc_hl_hl, undefined, undefined, undefined, undefined, undefined, // 6
-    undefined, undefined, sbc_hl_sp, undefined, undefined, undefined, undefined, undefined, undefined, undefined, adc_hl_sp, undefined, undefined, undefined, undefined, undefined, // 7
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 8
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // 9
-    bt_ldi, bs_cpi, undefined, undefined, undefined, undefined, undefined, undefined, bt_ldd, bs_cpd, undefined, undefined, undefined, undefined, undefined, undefined, // A
-    bt_ldir, bs_cpir, undefined, undefined, undefined, undefined, undefined, undefined, bt_lddr, bs_cpdr, undefined, undefined, undefined, undefined, undefined, undefined, // B
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // C
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // D
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // E
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, // F
+    //0         1           2           3             4           5           6           7           8           9           A           B             C           D           E           F
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 0
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 1
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 2
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 3
+    undefined, undefined,   sbc_hl_bc,  ld_nn_dd_ext, neg,        undefined,  im_0,       ld_i_a,     undefined,  undefined,  adc_hl_bc,  ld_dd_nn_ext, neg,        undefined,  im_0,       ld_r_a,     // 4
+    undefined, undefined,   sbc_hl_de,  ld_nn_dd_ext, neg,        undefined,  im_1,       ld_a_i,     undefined,  undefined,  adc_hl_de,  ld_dd_nn_ext, neg,        undefined,  im_2,       ld_a_r,     // 5
+    undefined, undefined,   sbc_hl_hl,  ld_nn_dd_ext, neg,        undefined,  im_0,       undefined,  undefined,  undefined,  adc_hl_hl,  ld_dd_nn_ext, neg,        undefined,  im_0,       undefined,  // 6
+    undefined, undefined,   sbc_hl_sp,  ld_nn_dd_ext, neg,        undefined,  im_1,       undefined,  undefined,  undefined,  adc_hl_sp,  ld_dd_nn_ext, neg,        undefined,  im_2,       undefined,  // 7
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 8
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 9
+    bt_ldi,     bs_cpi,     undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, bt_ldd,     bs_cpd,     undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // A
+    bt_ldir,    bs_cpir,    undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, bt_lddr,    bs_cpdr,    undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // B
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // C
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // D
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // E
+    ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // F
 };
 
+// zig fmt: off
 const cb_instructions_table = [256]InstructionFn{
-    //  0      1      2      3      4      5       6      7      8      9      A      B      C      D       E      F
+    // 0   1      2      3      4      5      6       7      8      9      A      B      C      D      E       F
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 0
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 1
     rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_r, rot_hl, rot_r, // 2
@@ -1390,8 +1790,9 @@ const cb_instructions_table = [256]InstructionFn{
 };
 
 // DDCBx or FDCBx
+// zig fmt: off
 const xy_cb_instructions_table = [256]InstructionFn{
-    //   0       1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
+    //0     1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
     rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 0
     rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 1
     rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, rot_xy, // 2
