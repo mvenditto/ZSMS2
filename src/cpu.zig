@@ -193,7 +193,8 @@ pub const Z80State = packed struct {
     _p3: *u8 = undefined, // E
     _p4: *u8 = undefined, // IXh
     _p5: *u8 = undefined, // IXl
-    _p6: *u8 = undefined, // A
+    _p6: *u8 = undefined, //
+    _p7: *u8 = undefined, // A
 
     // Index: B,C,D,E,IYh,IYl,A
     _q0: *u8 = undefined, // B
@@ -202,7 +203,8 @@ pub const Z80State = packed struct {
     _q3: *u8 = undefined, // E
     _q4: *u8 = undefined, // IYh
     _q5: *u8 = undefined, // IYl
-    _q6: *u8 = undefined, // A
+    _q6: *u8 = undefined, //
+    _q7: *u8 = undefined, // A
 
     // Index: BC,DE,HL,SP
     _d0: *SixteenBitRegister = undefined, // B
@@ -228,8 +230,8 @@ pub const Z80State = packed struct {
     gp_registers_pairs: *[4]SixteenBitRegister = undefined,
 
     // Other register indexes
-    p: *[7]*u8 = undefined, // B,C,D,E,IXh,IXl,A
-    q: *[7]*u8 = undefined, // B,C,D,E,IYh,IYl,A
+    p: *[8]*u8 = undefined, // B,C,D,E,IXh,IXl,A
+    q: *[8]*u8 = undefined, // B,C,D,E,IYh,IYl,A
     d: *[4]*SixteenBitRegister = undefined, // BC,DE,HL,SP
 
     // memory
@@ -261,7 +263,8 @@ pub const Z80State = packed struct {
         state._p3 = &state.DE.low;
         state._p4 = &state.IX.high;
         state._p5 = &state.IX.low;
-        state._p6 = &state.AF.A;
+        state._p6 = undefined;
+        state._p7 = &state.AF.A;
 
         state._q0 = &state.BC.high;
         state._q1 = &state.BC.low;
@@ -269,7 +272,8 @@ pub const Z80State = packed struct {
         state._q3 = &state.DE.low;
         state._q4 = &state.IY.high;
         state._q5 = &state.IY.low;
-        state._q6 = &state.AF.A;
+        state._q6 = undefined;
+        state._q7 = &state.AF.A;
 
         state._d0 = &state.BC;
         state._d1 = &state.DE;
@@ -279,10 +283,10 @@ pub const Z80State = packed struct {
         const indexed: [*]*u8 = @ptrCast(state);
 
         const p_start = @offsetOf(Self, "_p0") / @sizeOf(*u8);
-        state.p = indexed[p_start .. p_start + 7];
+        state.p = indexed[p_start .. p_start + 8];
 
         const q_start = @offsetOf(Self, "_q0") / @sizeOf(*u8);
-        state.q = indexed[q_start .. q_start + 7];
+        state.q = indexed[q_start .. q_start + 8];
 
         const indexed2: [*]*SixteenBitRegister = @ptrCast(state);
 

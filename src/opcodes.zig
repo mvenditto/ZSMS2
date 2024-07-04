@@ -172,16 +172,23 @@ pub fn nop_nop(s: *Z80State, _: *const OpCode) u8 {
     return 8;
 }
 
-pub fn ed_illegal(_: *Z80State, opcode: *const OpCode) u8 {
-    std.debug.panic("PANIC: Illegal opcode: ED {x}\n", .{@as(u8, @bitCast(opcode.*))});
-    return 0;
+// acts as a NOP NOP
+pub fn ed_illegal(s: *Z80State, opcode: *const OpCode) u8 {
+    std.debug.print(
+        "Illegal opcode ED{x}: nop nop.\n",
+        .{@as(u8, @bitCast(opcode.*))},
+    );
+    s.PC +%= 1;
+    return 8;
 }
 
-pub fn xy_illegal(_: *Z80State, opcode: *const OpCode) u8 {
-    std.debug.panic("PANIC: Illegal opcode: (DD|FD) {x}\n", .{@as(u8, @bitCast(opcode.*))});
-    return 0;
+// the prefix (DD or FD) is ignored and the rest of the
+// opcode executed as if it was "unprefixed".
+pub fn xy_illegal(s: *Z80State, _: *const OpCode) u8 {
+    const next_opcode = s.memory[s.PC];
+    const next: OpCode = @bitCast(next_opcode);
+    return instructions_table[next_opcode](s, &next) + 4; // 4 t-states for the prefix
 }
-
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
     const t = s.AF.A +% rhs; // +% = wrapping addition
     s.AF.F.N = false;
@@ -334,7 +341,7 @@ pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opco
 }
 
 pub fn al_a_p(state: *Z80State, opcode: *const OpCode) u8 {
-    const registers: *[7]*u8 = if (state.memory[state.PC -% 1] == 0xdd) state.p else state.q;
+    const registers: *[8]*u8 = if (state.memory[state.PC -% 1] == 0xdd) state.p else state.q;
     const rhs = registers[opcode.z].*;
 
     state.PC +%= 1;
@@ -652,10 +659,50 @@ pub fn xy_cb_prefix(state: *Z80State, _: *const OpCode) u8 {
     return insn_func(state, &opcode);
 }
 
+pub fn consumeXYSequence(state: *Z80State) u8 {
+    // Consume the sequence of FD and DD prefixes.
+    var prefix = state.memory[state.PC];
+    var curr = fetchOpcode(state);
+
+    while (curr & 0xdd == 0xdd) { // 0xdd or 0xfd
+        prefix = curr; // update last seen prefix and go on
+        state.PC +%= 1;
+        state.cycles +%= 4;
+        curr = fetchOpcode(state);
+    }
+
+    // decrement PC so that the full opcode 0x(dd|fd)hh is executed next
+    state.PC -%= 1;
+
+    std.debug.assert(state.memory[state.PC] & 0xdd == 0xdd);
+    std.debug.assert(state.memory[state.PC +% 1] & 0xdd != 0xdd);
+
+    // The last seen DD or FD prefix is the one that matters.
+    return prefix;
+}
+
+pub fn xy_xy_seq(state: *Z80State, _: *const OpCode) u8 {
+    const final_prefix = @call(.always_inline, consumeXYSequence, .{state});
+
+    const opcode: OpCode = @bitCast(final_prefix);
+
+    if (final_prefix == 0xfd) {
+        return fd_prefix(state, &opcode);
+    } else {
+        return dd_prefix(state, &opcode);
+    }
+}
+
 pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
     state.PC +%= 1;
     return 4;
+}
+
+pub fn ld_u_r_r(state: *Z80State, opcode: *const OpCode) u8 {
+    state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
+    state.PC +%= 1;
+    return 8;
 }
 
 pub fn ld_p_xyh(state: *Z80State, opcode: *const OpCode) u8 {
@@ -678,6 +725,18 @@ pub fn ld_p_xyl(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn ld_xyl_p(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register.low = state.gp_registers[opcode.z];
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn ld_p_xyh_xyl(state: *Z80State, _: *const OpCode) u8 {
+    state.addr_register.high = state.addr_register.low;
+    state.PC +%= 1;
+    return 8;
+}
+
+pub fn ld_p_xyl_xyh(state: *Z80State, _: *const OpCode) u8 {
+    state.addr_register.low = state.addr_register.high;
     state.PC +%= 1;
     return 8;
 }
@@ -1039,6 +1098,27 @@ pub fn ret(state: *Z80State, _: *const OpCode) u8 {
     state.WZ.low = b_low;
     state.WZ.high = b_high;
     return 10;
+}
+
+pub fn ret_cc(state: *Z80State, opcode: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    const b_low = state.memory[sp];
+    sp +%= 1;
+    const b_high = state.memory[sp];
+    sp +%= 1;
+
+    if (evalFlagsCondition(state, opcode.y)) // y=ccc
+    {
+        state.SP.setValue(sp);
+        state.PC = @intCast(b_low | @as(u16, b_high) << 8);
+        return 10;
+    }
+
+    state.WZ.low = b_low;
+    state.WZ.high = b_high;
+    state.PC +%= 1;
+
+    return 5;
 }
 
 pub const IncDecOperation = enum {
@@ -1744,32 +1824,32 @@ const instructions_table = [256]InstructionFn{
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // 9
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // A
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // B
-    undefined, pop_qq,   jp_cc_nn,     jp_nn,       call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    ret,       jp_cc_nn,     cb_prefix,   call_cc_nn, call_nn,   al_a_n,  undefined, // C
-    undefined, pop_qq,   jp_cc_nn,     undefined,   call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    be_exx,    jp_cc_nn,     undefined,   call_cc_nn, dd_prefix, al_a_n,  undefined, // D
-    undefined, pop_qq,   jp_cc_nn,     be_ex_sp_hl, call_cc_nn, push_qq,  al_a_n,    undefined, undefined,    jp_hl,     jp_cc_nn,     be_ex_de_hl, call_cc_nn, ed_prefix, al_a_n,  undefined, // E
-    undefined, pop_af,   jp_cc_nn,     di,          call_cc_nn, push_af,  al_a_n,    undefined, undefined,    ld_sp_hl,  jp_cc_nn,     ei,          call_cc_nn, fd_prefix, al_a_n,  undefined, // F
+    ret_cc,    pop_qq,   jp_cc_nn,     jp_nn,       call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       ret,       jp_cc_nn,     cb_prefix,   call_cc_nn, call_nn,   al_a_n,  undefined, // C
+    ret_cc,    pop_qq,   jp_cc_nn,     undefined,   call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       be_exx,    jp_cc_nn,     undefined,   call_cc_nn, dd_prefix, al_a_n,  undefined, // D
+    ret_cc,    pop_qq,   jp_cc_nn,     be_ex_sp_hl, call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       jp_hl,     jp_cc_nn,     be_ex_de_hl, call_cc_nn, ed_prefix, al_a_n,  undefined, // E
+    ret_cc,    pop_af,   jp_cc_nn,     di,          call_cc_nn, push_af,  al_a_n,    undefined, ret_cc,       ld_sp_hl,  jp_cc_nn,     ei,          call_cc_nn, fd_prefix, al_a_n,  undefined, // F
 };
 
 // Indexed addressing XY opcodes
 // zig fmt: off
 const xy_instructions_table = [256]InstructionFn{
-    //0         1            2             3            4           5           6           7           8           9           A             B             C           D           E           F
-    nop_nop,    xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,  undefined,  undefined,  xy_illegal, add_xy_bc,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 0
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,  undefined,  undefined,  xy_illegal, add_xy_de,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 1
-    xy_illegal, ld_xy_nn,   ld_nn_xy_ext, inc_dec_xy,  undefined,  undefined,  undefined,  undefined,  undefined,  add_xy_ix,  ld_xy_nn_ext, inc_dec_xy,   undefined,  undefined,  undefined,  xy_illegal, // 2
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_xy,   al2_a_xy,   ld_xy_n,    undefined,  undefined,  add_xy_sp,  xy_illegal,   xy_illegal,   undefined,  undefined,  undefined,  xy_illegal, // 3
-    nop_nop,    undefined,  undefined,    undefined,   ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  undefined,  nop_nop,    undefined,    undefined,    ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  // 4
-    undefined,  undefined,  nop_nop,      undefined,   ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  undefined,  undefined,  undefined,    nop_nop,      ld_p_xyh,   ld_p_xyl,   ld_r_xy,    undefined,  // 5
-    ld_xyh_p,   ld_xyh_p,   ld_xyh_p,     ld_xyh_p,    nop_nop,    undefined,  ld_r_xy,    ld_xyh_p,   ld_xyl_p,   ld_xyl_p,   ld_xyl_p,     ld_xyl_p,     undefined,  nop_nop,    ld_r_xy,    ld_xyl_p,   // 6
-    ld_xy_r,    ld_xy_r,    ld_xy_r,      ld_xy_r,     ld_xy_r,    ld_xy_r,    xy_illegal, ld_xy_r,    undefined,  undefined,  undefined,    undefined,    ld_p_xyh,   ld_p_xyl,   ld_r_xy,    nop_nop,    // 7
-    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // 8
-    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // 9
-    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // A
-    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,     al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,     al_a_p,     al_a_xy,    al_a_p,     // B
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_cb_prefix, xy_illegal, xy_illegal, xy_illegal, xy_illegal, // C
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_illegal,   xy_illegal, undefined,  xy_illegal, xy_illegal, // D
-    xy_illegal, pop_xy,     xy_illegal,   be_ex_sp_xy, xy_illegal, push_xy,    xy_illegal, xy_illegal, xy_illegal, jp_xy,      xy_illegal,   xy_illegal,   xy_illegal, xy_illegal, xy_illegal, xy_illegal, // E
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal, ld_sp_xy,   xy_illegal,   xy_illegal,   xy_illegal, undefined,  xy_illegal, xy_illegal, // F
+    //0         1            2             3            4          5             6           7           8           9           A             B             C             D           E           F
+    nop_nop,    xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_bc,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 0
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_de,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 1
+    xy_illegal, ld_xy_nn,   ld_nn_xy_ext, inc_dec_xy,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_ix,  ld_xy_nn_ext, inc_dec_xy,   undefined,    undefined,  undefined,  xy_illegal, // 2
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_xy,   al2_a_xy,     ld_xy_n,    xy_illegal, xy_illegal, add_xy_sp,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 3
+    nop_nop,    ld_u_r_r,   ld_u_r_r,     ld_u_r_r,    ld_p_xyh,   ld_p_xyl,     ld_r_xy,    ld_u_r_r,   ld_u_r_r,   nop_nop,    ld_u_r_r,     ld_u_r_r,     ld_p_xyh,     ld_p_xyl,   ld_r_xy,    ld_u_r_r,   // 4
+    ld_u_r_r,   ld_u_r_r,   nop_nop,      ld_u_r_r,    ld_p_xyh,   ld_p_xyl,     ld_r_xy,    ld_u_r_r,   ld_u_r_r,   ld_u_r_r,   ld_u_r_r,     nop_nop,      ld_p_xyh,     ld_p_xyl,   ld_r_xy,    ld_u_r_r,   // 5
+    ld_xyh_p,   ld_xyh_p,   ld_xyh_p,     ld_xyh_p,    nop_nop,    ld_p_xyh_xyl, ld_r_xy,    ld_xyh_p,   ld_xyl_p,   ld_xyl_p,   ld_xyl_p,     ld_xyl_p,     ld_p_xyl_xyh, nop_nop,    ld_r_xy,    ld_xyl_p,   // 6
+    ld_xy_r,    ld_xy_r,    ld_xy_r,      ld_xy_r,     ld_xy_r,    ld_xy_r,      xy_illegal, ld_xy_r,    ld_u_r_r,   ld_u_r_r,   ld_u_r_r,     ld_u_r_r,     ld_p_xyh,     ld_p_xyl,   ld_r_xy,    nop_nop,    // 7
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,       al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,       al_a_p,     al_a_xy,    al_a_p,     // 8
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,       al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,       al_a_p,     al_a_xy,    al_a_p,     // 9
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,       al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,       al_a_p,     al_a_xy,    al_a_p,     // A
+    al_a_p,     al_a_p,     al_a_p,       al_a_p,      al_a_p,     al_a_p,       al_a_xy,    al_a_p,     al_a_p,     al_a_p,     al_a_p,       al_a_p,       al_a_p,       al_a_p,     al_a_xy,    al_a_p,     // B
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal,   xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_cb_prefix, xy_illegal,   xy_illegal, xy_illegal, xy_illegal, // C
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal,   xy_illegal, xy_illegal, xy_illegal, xy_illegal, xy_illegal,   xy_illegal,   xy_illegal,   xy_xy_seq,  xy_illegal, xy_illegal, // D
+    xy_illegal, pop_xy,     xy_illegal,   be_ex_sp_xy, xy_illegal, push_xy,      xy_illegal, xy_illegal, xy_illegal, jp_xy,      xy_illegal,   xy_illegal,   xy_illegal,   xy_illegal, xy_illegal, xy_illegal, // E
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  xy_illegal, xy_illegal,   xy_illegal, xy_illegal, xy_illegal, ld_sp_xy,   xy_illegal,   xy_illegal,   xy_illegal,   xy_xy_seq,  xy_illegal, xy_illegal, // F
 };
 
 // zig fmt: off
@@ -1782,7 +1862,7 @@ const ed_instructions_table = [256]InstructionFn{
     undefined, undefined,   sbc_hl_bc,  ld_nn_dd_ext, neg,        undefined,  im_0,       ld_i_a,     undefined,  undefined,  adc_hl_bc,  ld_dd_nn_ext, neg,        undefined,  im_0,       ld_r_a,     // 4
     undefined, undefined,   sbc_hl_de,  ld_nn_dd_ext, neg,        undefined,  im_1,       ld_a_i,     undefined,  undefined,  adc_hl_de,  ld_dd_nn_ext, neg,        undefined,  im_2,       ld_a_r,     // 5
     undefined, undefined,   sbc_hl_hl,  ld_nn_dd_ext, neg,        undefined,  im_0,       undefined,  undefined,  undefined,  adc_hl_hl,  ld_dd_nn_ext, neg,        undefined,  im_0,       undefined,  // 6
-    undefined, undefined,   sbc_hl_sp,  ld_nn_dd_ext, neg,        undefined,  im_1,       undefined,  undefined,  undefined,  adc_hl_sp,  ld_dd_nn_ext, neg,        undefined,  im_2,       undefined,  // 7
+    undefined, undefined,   sbc_hl_sp,  ld_nn_dd_ext, neg,        undefined,  im_1,       ed_illegal, undefined,  undefined,  adc_hl_sp,  ld_dd_nn_ext, neg,        undefined,  im_2,       undefined,  // 7
     ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 8
     ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 9
     bt_ldi,     bs_cpi,     undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, bt_ldd,     bs_cpd,     undefined,  undefined,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // A
@@ -1847,4 +1927,49 @@ pub fn exec(state: *Z80State, opcode: u8) void {
     const insn_func = instructions_table[opcode];
     const insn_cycles = insn_func(state, decoded);
     state.cycles +%= insn_cycles;
+}
+
+pub const OpExecError = error {OpNotImplemented,OpIllegal};
+
+pub fn testExec(state: *Z80State, opcode: u8) OpExecError!void {
+    const decoded: *const OpCode = @ptrCast(&opcode);
+    
+    var table = &instructions_table;
+    var next = state.memory[state.PC +% 1];
+
+    switch (opcode) {
+        0xdd => {
+            if (next == 0xcb){
+                table = &xy_cb_instructions_table;
+            }
+            else {
+                table = &xy_instructions_table;
+            }
+        },
+        0xfd => {
+            if (next == 0xcb){
+                table = &xy_cb_instructions_table;
+            }
+            else {
+                table = &xy_instructions_table;
+            }
+        },
+        0xcb => table = &cb_instructions_table,
+        0xed => table = &ed_instructions_table,
+        else => {
+            next = opcode;
+        }
+    }
+
+    const func: ?InstructionFn = table[next];
+
+    if (func)
+    {
+        const insn_func = instructions_table[opcode];
+        const insn_cycles = insn_func(state, decoded);
+        state.cycles +%= insn_cycles;
+    }
+    else {
+        return OpExecError.OpNotImplemented;
+    }
 }
