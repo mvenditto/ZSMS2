@@ -14,6 +14,7 @@ const OpcodeTest = struct {
     initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
     final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
     cycles: []const [3]std.json.Value,
+    ports: []const [3]std.json.Value,
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
         var s = try cpu.Z80State.init(allocator);
         const init = self.initial;
@@ -125,6 +126,7 @@ test "xz" {
     std.debug.print("l={d} h={d}\n", .{ s.IX.low, s.IX.high });
 
     for (s.p, 0..) |p, i| {
+        if (i == 6) continue;
         std.debug.print("[{d}] : {d}\n", .{ i, p.* });
     }
 }
@@ -377,7 +379,27 @@ test "opcode xyz decode" {
     try expectEquals(cpu.EightBitRegisters.C, r89); // r == B
 }
 
-fn parseZ80TestFile(file_path: []const u8) ![]OpcodeTest {
+test "FD-DD sequence" {
+    const op = @import("opcodes.zig");
+
+    var s = try cpu.Z80State.init(std.heap.page_allocator);
+    defer s.deinit(std.heap.page_allocator);
+
+    s.PC = 0;
+
+    const seq: [6]u8 = [_]u8{ 0xdd, 0xdd, 0xfd, 0xdd, 0xfd, 0x42 };
+
+    for (seq, 0..) |opcode, i| {
+        s.memory[i] = opcode;
+    }
+
+    const final = op.consumeXYSequence(s);
+
+    try expectEquals(0xfd, final);
+    try expectEquals(0x42, s.memory[s.PC +% 1]);
+}
+
+fn parseZ80TestFile(file_path: []const u8, allocator: std.mem.Allocator) !std.json.Parsed([]OpcodeTest) {
     const file = try std.fs.openFileAbsolute(
         file_path,
         .{
@@ -385,18 +407,16 @@ fn parseZ80TestFile(file_path: []const u8) ![]OpcodeTest {
         },
     );
 
-    const json = try file.readToEndAlloc(std.heap.page_allocator, 10_000_000);
+    const json = try file.readToEndAlloc(allocator, 10_000_000);
 
     const parsed = try std.json.parseFromSlice(
         []OpcodeTest,
-        std.heap.page_allocator,
+        allocator,
         json,
         .{ .ignore_unknown_fields = true },
     );
 
-    const tests = parsed.value;
-
-    return tests;
+    return parsed;
 }
 
 fn getFileName(file_path: []const u8) []const u8 {
@@ -414,6 +434,60 @@ fn getFileName(file_path: []const u8) []const u8 {
 
     return file_name_no_ext;
 }
+
+// test "SingleStepTests/z80/not_impl" {
+//     const op = @import("opcodes.zig");
+
+//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//     defer arena.deinit();
+//     const allocator = arena.allocator();
+
+//     const tests_base_path = try std.fs.cwd().realpathAlloc(
+//         allocator,
+//         ".\\tests\\SingleStepTests\\z80\\v1",
+//     );
+
+//     std.debug.print("\nSingleStepTests:\n", .{});
+
+//     const dir = try std.fs.openDirAbsolute(tests_base_path, .{
+//         .access_sub_paths = false,
+//         .iterate = true,
+//     });
+
+//     var dirwalker = try dir.walk(allocator);
+//     defer dirwalker.deinit();
+
+//     outer: while (try dirwalker.next()) |entry| {
+//         const test_file_name = entry.path;
+
+//         var arena2 = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//         defer arena2.deinit();
+//         const allocator2 = arena2.allocator();
+
+//         const file_path = try std.mem.concat(
+//             allocator2,
+//             u8,
+//             &[_][]const u8{ tests_base_path, "\\", test_file_name },
+//         );
+//         const parsed = try parseZ80TestFile(file_path, allocator2);
+//         const tests = parsed.value;
+
+//         for (tests[1..], 0..) |t, i| {
+//             const s = try t.toZ80State(allocator2);
+//             defer s.deinit(allocator2);
+
+//             const opcode = op.fetchOpcode(s);
+
+//             op.testExec(s, opcode) catch |err| {
+//                 switch (err) {
+//                     op.OpExecError.OpNotImplemented => std.debug.print("[{d}] {s}: FAIL (NOT_IMPLEMENTED)\n", .{ i, t.name }),
+//                     op.OpExecError.OpIllegal => std.debug.print("[{d}] {s}: FAIL (ILLEGAL)\n", .{ i, t.name }),
+//                 }
+//                 continue :outer;
+//             };
+//         }
+//     }
+// }
 
 test "SingleStepTests/z80" {
     const op = @import("opcodes.zig");
@@ -581,6 +655,16 @@ test "SingleStepTests/z80" {
         "cd", // CALL nn
         "c4", "d4", "e4", "f4", "cc", "dc", "ec", "fc", // CALL cc,nn
         "c9", // ret
+        "f0",
+        "fd 30", "fd 31", "fd 32", "fd 33", "fd 34", "fd 35", "fd 36", "fd 38", "fd 39", "fd 3a", "fd 3b", // "fd 3c", "fd 3d", "fd 3e", //
+        "fd 40", "fd 41", "fd 42", "fd 43", "fd 44", "fd 45", "fd 46", "fd 47", "fd 48", "fd 49", "fd 4a",
+        "fd 4b", "fd 4c", "fd 4d", "fd 4e", "fd 4f", "fd 50", "fd 51", "fd 52", "fd 53", "fd 54", "fd 55",
+        "fd 56", "fd 57", "fd 58", "fd 59", "fd 5a", "fd 5b", "fd 5c", "fd 5d", "fd 5e", "fd 5f", "fd 60",
+        "fd 61", "fd 62", "fd 63", "fd 64", "fd 65", "fd 66", "fd 67", "fd 68", "fd 69", "fd 6a", "fd 6b",
+        "fd 6c", "fd 6d", "fd 6e", "fd 6f", "fd 70", "fd 71", "fd 72", "fd 73", "fd 74", "fd 75", //"fd 76",
+        "fd 77", "fd 78", "fd 79", "fd 7a", "fd 7b", "fd 7c", "fd 7d", "fd 7e", "fd 7f", "fd 80",
+        "fd 81", "fd 82", "fd 83", "fd 84", "fd 85", "fd 86", "fd 87", "fd 88", "fd 89", "fd 8a",
+        "fd 8b", "fd 8c", "fd 8d", "fd 8e", "fd 8f",
     };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -593,23 +677,41 @@ test "SingleStepTests/z80" {
     );
 
     var failed: u32 = 0;
+    var success: u32 = 0;
 
     std.debug.print("\nSingleStepTests:\n", .{});
 
+    // const dir = try std.fs.openDirAbsolute(tests_base_path, .{
+    //     .access_sub_paths = false,
+    //     .iterate = true,
+    // });
+
+    // var dirwalker = try dir.walk(allocator);
+    // defer dirwalker.deinit();
+
+    // outer: while (try dirwalker.next()) |entry| {
     for (opcodes_to_test) |test_file_name| {
+        // const test_file_name = entry.path;
+
         const file_path = try std.mem.concat(
             allocator,
             u8,
             &[_][]const u8{ tests_base_path, "\\", test_file_name, ".json" },
         );
 
-        const tests = try parseZ80TestFile(file_path);
+        const parsed = try parseZ80TestFile(file_path, allocator);
+
+        const tests = parsed.value;
+
+        failed = 0;
+        success = 0;
 
         for (tests[1..], 0..) |t, i| {
             const s = try t.toZ80State(allocator);
             defer s.deinit(allocator);
 
             const opcode = op.fetchOpcode(s);
+
             op.exec(s, opcode);
 
             t.expectState(s) catch |err| {
@@ -619,12 +721,18 @@ test "SingleStepTests/z80" {
                     .{ i, t.name },
                 );
                 failed += 1;
+                //continue :outer;
                 return err;
             };
+
+            success += 1;
+
             // std.debug.print("[{d}] {s}: OK\n", .{ i, t.name });
         }
 
-        std.debug.print("   [{s}] - {d}, failed {d} ({d}/1000)\n", .{ test_file_name, 1000 - failed, failed, 1000 - failed });
+        parsed.deinit();
+
+        std.debug.print("   [{s}] - success {d}, failed {d} ({d}/1000)\n", .{ test_file_name, success, failed, 1000 - failed });
 
         if (failed > 0) {
             return error.TestUnexpectedValue;
