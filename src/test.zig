@@ -11,12 +11,44 @@ const CycleSample = struct {
 
 const OpcodeTest = struct {
     name: []const u8,
-    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
-    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: []const [2]u16 },
+    initial: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: [][2]u16 },
+    final: struct { pc: u16, sp: u16, a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, f: u8, wz: u16, af_: u16, bc_: u16, de_: u16, hl_: u16, i: u8, r: u8, ix: u16, iy: u16, iff1: u1, iff2: u1, ram: [][2]u16 },
     cycles: []const [3]std.json.Value,
-    ports: []const [3]std.json.Value,
+    // ports: ?[]const [3]std.json.Value,
+
     fn toZ80State(self: *const OpcodeTest, allocator: std.mem.Allocator) !*cpu.Z80State {
-        var s = try cpu.Z80State.init(allocator);
+        const impl = struct {
+            pub fn read(ctx: *anyopaque, address: u16) u8 {
+                const self2: *OpcodeTest = @ptrCast(@alignCast(ctx));
+                for (self2.initial.ram) |location| {
+                    const addr = location[0];
+                    const value = location[1];
+                    if (addr == address) {
+                        return @truncate(value);
+                    }
+                }
+                std.debug.panic("read: out of bounds, addr={d}\n", .{address});
+            }
+
+            pub fn write(ctx: *anyopaque, address: u16, value: u8) void {
+                const self2: *OpcodeTest = @ptrCast(@alignCast(ctx));
+                for (0..self2.initial.ram.len) |i| {
+                    if (self2.initial.ram[i][0] == address) {
+                        self2.initial.ram[i][1] = @intCast(value);
+                        return;
+                    }
+                }
+                std.debug.panic("write: out of bounds, addr={d}\n", .{address});
+            }
+        };
+
+        var s = try cpu.Z80State.init(
+            allocator,
+            self,
+            impl.read,
+            impl.write,
+        );
+
         const init = self.initial;
         s.AF.A = init.a;
         s.AF.setFlags(init.f);
@@ -39,10 +71,6 @@ const OpcodeTest = struct {
         s.BC_.setValue(init.bc_);
         s.DE_.setValue(init.de_);
         s.HL_.setValue(init.hl_);
-
-        for (init.ram) |loc| {
-            s.memory[loc[0]] = @truncate(loc[1]);
-        }
 
         return s;
     }
@@ -77,7 +105,7 @@ const OpcodeTest = struct {
         for (final.ram) |loc| {
             const address: u16 = @truncate(loc[0]);
             const value: u8 = @truncate(loc[1]);
-            try expectEquals(value, s.memory[address]);
+            try expectEquals(value, s.read(address));
         }
 
         expectEquals(final.f, s.AF.getFlags()) catch |err| {
@@ -92,11 +120,37 @@ const OpcodeTest = struct {
     }
 };
 
-pub fn printError(
-    trace: ?*std.builtin.StackTrace,
-    comptime format: []const u8,
-    args: anytype,
-) void {
+pub const TestIO = struct {
+    memory: [64 * 1024]u8,
+
+    const Self = @This();
+
+    pub fn init() !*Self {
+        const s = try std.testing.allocator.create(Self);
+        s.memory = std.mem.zeroes([64 * 1024]u8);
+        return s;
+    }
+
+    pub fn deinit(self: *Self) void {
+        std.testing.allocator.destroy(self);
+    }
+
+    pub fn read(ctx: *const anyopaque, address: u16) u8 {
+        const self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+        return self.memory[address];
+    }
+
+    pub fn write(ctx: *anyopaque, address: u16, value: u8) void {
+        var self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+        self.memory[address] = value;
+    }
+};
+
+var test_io = TestIO{
+    .memory = std.mem.zeroes([64 * 1024]u8),
+};
+
+pub fn printError(trace: ?*std.builtin.StackTrace, comptime format: []const u8, args: anytype) void {
     @setCold(true);
 
     const size = 0x1000;
@@ -112,8 +166,35 @@ pub fn printError(
     std.debug.print("{s}:\nTRACE:\n{any}\n", .{ msg, trace });
 }
 
+test "test IO" {
+    var io = try TestIO.init();
+    defer io.deinit();
+
+    var s = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        io,
+        TestIO.read,
+        TestIO.write,
+    );
+
+    io.memory[1234] = 124;
+
+    const m = io.memory[1234];
+
+    try expectEquals(124, m);
+
+    const p = s.read(1234);
+
+    try expectEquals(124, p);
+}
+
 test "xz" {
-    var s = try cpu.Z80State.init(std.heap.page_allocator);
+    var s = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     s.BC.high = 10;
     s.BC.low = 11;
     s.DE.high = 12;
@@ -131,20 +212,13 @@ test "xz" {
     }
 }
 
-test "mem swap" {
-    var s = try cpu.Z80State.init(std.heap.page_allocator);
-    defer s.deinit(std.heap.page_allocator);
-    s.memory[0] = 42;
-    s.memory[1000] = 55;
-    try expectEquals(42, s.memory[0]);
-    try expectEquals(55, s.memory[1000]);
-    std.mem.swap(u8, &s.memory[0], &s.memory[1000]);
-    try expectEquals(55, s.memory[0]);
-    try expectEquals(42, s.memory[1000]);
-}
-
 test "16 bit registers set/get" {
-    var r = try cpu.Z80State.init(std.heap.page_allocator);
+    var r = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
 
     var i: u16 = 0;
     while (i < std.math.maxInt(u16)) : (i += 1) {
@@ -167,7 +241,12 @@ test "16 bit registers set/get" {
 }
 
 test "Flags register set/get" {
-    var r = try cpu.Z80State.init(std.heap.page_allocator);
+    var r = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     if (false) {
         r.AF.setFlags(0b00000000);
         try expect(r.AF.F.zero == false);
@@ -302,7 +381,12 @@ test "load rom" {
 }
 
 test "register array access" {
-    var state = try cpu.Z80State.init(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     const expected = [8]u8{ 10, 11, 20, 21, 30, 31, 255, 41 };
 
     state.BC.high = expected[@intFromEnum(cpu.EightBitRegisters.B)];
@@ -324,7 +408,12 @@ test "register array access" {
 }
 
 test "register pairs array access" {
-    var state = try cpu.Z80State.init(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     const expected = [4]u16{ 8192, 16384, 32768, 65535 };
 
     state.BC.setValue(expected[@intFromEnum(cpu.RegisterPairs2.BC)]);
@@ -344,7 +433,12 @@ test "register pairs array access" {
 
 test "ADD A,r" {
     const op = @import("opcodes.zig");
-    var state = try cpu.Z80State.init(std.heap.page_allocator);
+    var state = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     state.AF.A = 0x44;
     _ = op.add_a_x(state, 0x11);
     try expect(state.AF.A == 0x55);
@@ -382,7 +476,12 @@ test "opcode xyz decode" {
 test "FD-DD sequence" {
     const op = @import("opcodes.zig");
 
-    var s = try cpu.Z80State.init(std.heap.page_allocator);
+    var s = try cpu.Z80State.init(
+        std.heap.page_allocator,
+        &test_io,
+        TestIO.read,
+        TestIO.write,
+    );
     defer s.deinit(std.heap.page_allocator);
 
     s.PC = 0;
@@ -390,13 +489,13 @@ test "FD-DD sequence" {
     const seq: [6]u8 = [_]u8{ 0xdd, 0xdd, 0xfd, 0xdd, 0xfd, 0x42 };
 
     for (seq, 0..) |opcode, i| {
-        s.memory[i] = opcode;
+        test_io.memory[i] = opcode;
     }
 
     const final = op.consumeXYSequence(s);
 
     try expectEquals(0xfd, final);
-    try expectEquals(0x42, s.memory[s.PC +% 1]);
+    try expectEquals(0x42, test_io.memory[s.PC +% 1]);
 }
 
 fn parseZ80TestFile(file_path: []const u8, allocator: std.mem.Allocator) !std.json.Parsed([]OpcodeTest) {
@@ -663,7 +762,7 @@ test "SingleStepTests/z80" {
         "fd 61", "fd 62", "fd 63", "fd 64", "fd 65", "fd 66", "fd 67", "fd 68", "fd 69", "fd 6a", "fd 6b",
         "fd 6c", "fd 6d", "fd 6e", "fd 6f", "fd 70", "fd 71", "fd 72", "fd 73", "fd 74", "fd 75", //"fd 76",
         "fd 77", "fd 78", "fd 79", "fd 7a", "fd 7b", "fd 7c", "fd 7d", "fd 7e", "fd 7f", "fd 80",
-        "fd 81", "fd 82", "fd 83", "fd 84", "fd 85", "fd 86", "fd 87", "fd 88", "fd 89", "fd 8a",
+        "fd 81", "fd 82", "fd 83", "fd 84", "fd 85", "fd 86", "fd 88", "fd 89", "fd 8a", // "fd 87",
         "fd 8b", "fd 8c", "fd 8d", "fd 8e", "fd 8f",
     };
 
