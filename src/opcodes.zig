@@ -75,44 +75,44 @@ pub inline fn readRegister(state: *Z80State, r: u8) u8 {
 }
 
 pub inline fn readImmediate(state: *Z80State, comptime offset: u8) u8 {
-    const value = state.memory[state.PC +% offset];
+    const value = state.read(state.PC +% offset);
     return value;
 }
 
 pub inline fn readExtended(state: *Z80State, comptime offset: u8) u8 {
-    const low = state.memory[state.PC + offset];
-    const high = state.memory[state.PC + offset + 1];
+    const low = state.read(state.PC + offset);
+    const high = state.read(state.PC + offset + 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
-    const value = state.memory[address];
+    const value = state.read(address);
     return value;
 }
 
 pub inline fn readImmediateExtended(state: *const Z80State, comptime offset: u8) .{ u8, u8 } {
-    const low = state.memory[state.PC +% offset];
-    const high = state.memory[state.PC +% offset +% 1];
+    const low = state.read(state.PC +% offset);
+    const high = state.read(state.PC +% offset +% 1);
     return .{ low, high };
 }
 
 pub inline fn readExtendedUpdateWZ(state: *Z80State, comptime offset: u8) u8 {
-    const low = state.memory[state.PC + offset];
-    const high = state.memory[state.PC + offset + 1];
+    const low = state.read(state.PC + offset);
+    const high = state.read(state.PC + offset + 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
-    const value = state.memory[address];
+    const value = state.read(address);
     state.WZ.setValue(address +% 1);
     return value;
 }
 
 pub inline fn readIndirect(state: *Z80State, rp: u8) u8 {
     const address = state.gp_registers_pairs[rp].getValue();
-    const value = state.memory[address];
+    const value = state.read(address);
     return value;
 }
 
 pub fn readIndexed(state: *Z80State, comptime offset: u8) u8 {
     const base_address: i32 = @intCast(state.addr_register.getValue());
-    const d: i8 = @bitCast(state.memory[state.PC + offset]); // displacement is two's complement
+    const d: i8 = @bitCast(state.read(state.PC + offset)); // displacement is two's complement
     const address: u16 = @intCast(@mod(base_address + d, 65536));
-    const value = state.memory[address];
+    const value = state.read(address);
     state.WZ.setValue(address);
     return value;
 }
@@ -123,43 +123,43 @@ pub inline fn storeRegister(state: *Z80State, r: u8, value: u8) void {
 
 pub inline fn storeIndirect(state: *Z80State, value: u8, rp: u8) void {
     const address = state.gp_registers_pairs[rp].getValue();
-    state.memory[address] = value;
+    state.write(address, value);
 }
 
 pub inline fn storeIndexed(state: *Z80State, value: u8, comptime offset: u8) void {
     const base_address: i32 = @intCast(state.addr_register.getValue());
-    const d: i8 = @bitCast(state.memory[state.PC + offset]); // displacement is two's complement
+    const d: i8 = @bitCast(state.read(state.PC + offset)); // displacement is two's complement
     const address: u16 = @intCast(@mod(base_address + d, 65536));
-    state.memory[address] = value;
+    state.write(address, value);
 }
 
 pub inline fn storeIndexedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
     const base_address: i32 = @intCast(state.addr_register.getValue());
-    const d: i8 = @bitCast(state.memory[state.PC + offset]); // displacement is two's complement
+    const d: i8 = @bitCast(state.read(state.PC + offset)); // displacement is two's complement
     const address: u16 = @intCast(@mod(base_address + d, 65536));
-    state.memory[address] = value;
+    state.write(address, value);
     state.WZ.setValue(address);
 }
 
 pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) void {
-    const low = state.memory[state.PC + offset];
-    const high = state.memory[state.PC + offset + 1];
+    const low = state.read(state.PC + offset);
+    const high = state.read(state.PC + offset + 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
-    state.memory[address] = value;
+    state.write(address, value);
 }
 
 pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
-    const low = state.memory[state.PC + offset];
-    const high = state.memory[state.PC + offset + 1];
+    const low = state.read(state.PC + offset);
+    const high = state.read(state.PC + offset + 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
-    state.memory[address] = value;
+    state.write(address, value);
     state.WZ.low = @truncate((address +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
 }
 
 pub inline fn loadImmediateExtended(state: *const Z80State, dst: *SixteenBitRegister, comptime offset: u8) void {
-    dst.low = state.memory[state.PC +% offset];
-    dst.high = state.memory[state.PC +% offset +% 1];
+    dst.low = state.read(state.PC +% offset);
+    dst.high = state.read(state.PC +% offset +% 1);
 }
 
 pub fn nop(s: *Z80State, _: *const OpCode) u8 {
@@ -185,7 +185,7 @@ pub fn ed_illegal(s: *Z80State, opcode: *const OpCode) u8 {
 // the prefix (DD or FD) is ignored and the rest of the
 // opcode executed as if it was "unprefixed".
 pub fn xy_illegal(s: *Z80State, _: *const OpCode) u8 {
-    const next_opcode = s.memory[s.PC];
+    const next_opcode = s.read(s.PC);
     const next: OpCode = @bitCast(next_opcode);
     return instructions_table[next_opcode](s, &next) + 4; // 4 t-states for the prefix
 }
@@ -341,7 +341,7 @@ pub inline fn al_a_x(comptime addressing: AddressingMode, state: *Z80State, opco
 }
 
 pub fn al_a_p(state: *Z80State, opcode: *const OpCode) u8 {
-    const registers: *[8]*u8 = if (state.memory[state.PC -% 1] == 0xdd) state.p else state.q;
+    const registers: *[8]*u8 = if (state.read(state.PC -% 1) == 0xdd) state.p else state.q;
     const rhs = registers[opcode.z].*;
 
     state.PC +%= 1;
@@ -653,7 +653,7 @@ pub fn cb_prefix(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn xy_cb_prefix(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
-    const opcode_int = state.memory[state.PC +% 1];
+    const opcode_int = state.read(state.PC +% 1);
     const opcode: OpCode = @bitCast(opcode_int);
     const insn_func = xy_cb_instructions_table[opcode_int];
     return insn_func(state, &opcode);
@@ -661,7 +661,7 @@ pub fn xy_cb_prefix(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn consumeXYSequence(state: *Z80State) u8 {
     // Consume the sequence of FD and DD prefixes.
-    var prefix = state.memory[state.PC];
+    var prefix = state.read(state.PC);
     var curr = fetchOpcode(state);
 
     while (curr & 0xdd == 0xdd) { // 0xdd or 0xfd
@@ -674,8 +674,8 @@ pub fn consumeXYSequence(state: *Z80State) u8 {
     // decrement PC so that the full opcode 0x(dd|fd)hh is executed next
     state.PC -%= 1;
 
-    std.debug.assert(state.memory[state.PC] & 0xdd == 0xdd);
-    std.debug.assert(state.memory[state.PC +% 1] & 0xdd != 0xdd);
+    std.debug.assert(state.read(state.PC) & 0xdd == 0xdd);
+    std.debug.assert(state.read(state.PC +% 1) & 0xdd != 0xdd);
 
     // The last seen DD or FD prefix is the one that matters.
     return prefix;
@@ -828,19 +828,19 @@ pub fn ld_r_a(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn ld_hl_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
-    state.memory[state.HL.getValue()] = state.gp_registers[opcode.z];
+    state.write(state.HL.getValue(), state.gp_registers[opcode.z]);
     return 7;
 }
 
 pub fn ld_hl_n(state: *Z80State, _: *const OpCode) u8 {
-    state.memory[state.HL.getValue()] = readImmediate(state, 1);
+    state.write(state.HL.getValue(), readImmediate(state, 1));
     state.PC +%= 2;
     return 10;
 }
 
 pub fn ld_bc_a(state: *Z80State, _: *const OpCode) u8 {
     const rp = state.BC.getValue();
-    state.memory[rp] = state.AF.A;
+    state.write(rp, state.AF.A);
     state.PC +%= 1;
     state.WZ.low = @truncate((rp +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
@@ -849,7 +849,7 @@ pub fn ld_bc_a(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn ld_de_a(state: *Z80State, _: *const OpCode) u8 {
     const rp = state.DE.getValue();
-    state.memory[rp] = state.AF.A;
+    state.write(rp, state.AF.A);
     state.PC +%= 1;
     state.WZ.low = @truncate((rp +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
@@ -885,12 +885,12 @@ pub fn ld_xy_nn(state: *Z80State, _: *const OpCode) u8 {
 pub fn ld_dd_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
     const rp = opcode.y >> 1; // y = 0bdd0
     const dd = state.d[rp];
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
-    dd.low = state.memory[address];
+    dd.low = state.read(address);
     const addr_next = address +% 1;
-    dd.high = state.memory[addr_next];
+    dd.high = state.read(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
     return 20;
@@ -899,12 +899,12 @@ pub fn ld_dd_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn ld_hl_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
     const rp = opcode.y >> 1; // y = 0bdd0
     const dd = state.d[rp];
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
-    dd.low = state.memory[address];
+    dd.low = state.read(address);
     const addr_next = address +% 1;
-    dd.high = state.memory[addr_next];
+    dd.high = state.read(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
     return 16;
@@ -912,24 +912,24 @@ pub fn ld_hl_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn ld_xy_nn_ext(state: *Z80State, _: *const OpCode) u8 {
     const dd = state.addr_register;
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
-    dd.low = state.memory[address];
+    dd.low = state.read(address);
     const addr_next = address +% 1;
-    dd.high = state.memory[addr_next];
+    dd.high = state.read(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
     return 20;
 }
 
 pub fn ld_nn_hl_ext(state: *Z80State, _: *const OpCode) u8 {
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
     const address_next = address +% 1;
-    state.memory[address] = state.HL.low;
-    state.memory[address +% 1] = state.HL.high;
+    state.write(address, state.HL.low);
+    state.write(address +% 1, state.HL.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
     return 16;
@@ -938,12 +938,12 @@ pub fn ld_nn_hl_ext(state: *Z80State, _: *const OpCode) u8 {
 pub fn ld_nn_dd_ext(state: *Z80State, opcode: *const OpCode) u8 {
     const rp = opcode.y >> 1; // y = 0bdd0
     const dd = state.d[rp];
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
     const address_next = address +% 1;
-    state.memory[address] = dd.low;
-    state.memory[address +% 1] = dd.high;
+    state.write(address, dd.low);
+    state.write(address +% 1, dd.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
     return 20;
@@ -951,12 +951,12 @@ pub fn ld_nn_dd_ext(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn ld_nn_xy_ext(state: *Z80State, _: *const OpCode) u8 {
     const dd = state.addr_register;
-    const addr_low = state.memory[state.PC +% 1];
-    const addr_high = state.memory[state.PC +% 1 +% 1];
+    const addr_low = state.read(state.PC +% 1);
+    const addr_high = state.read(state.PC +% 1 +% 1);
     const address: u16 = @intCast(addr_low | @as(u16, addr_high) << 8);
     const address_next = address +% 1;
-    state.memory[address] = dd.low;
-    state.memory[address +% 1] = dd.high;
+    state.write(address, dd.low);
+    state.write(address +% 1, dd.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
     return 20;
@@ -978,9 +978,9 @@ pub fn ld_sp_xy(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn push_af(state: *Z80State, _: *const OpCode) u8 {
     state.SP.decrement();
-    state.memory[state.SP.getValue()] = state.AF.A;
+    state.write(state.SP.getValue(), state.AF.A);
     state.SP.decrement();
-    state.memory[state.SP.getValue()] = @bitCast(state.AF.F);
+    state.write(state.SP.getValue(), @bitCast(state.AF.F));
     state.PC +%= 1;
     return 11;
 }
@@ -990,9 +990,9 @@ pub fn push_qq(state: *Z80State, opcode: *const OpCode) u8 {
     const rp = &state.gp_registers_pairs[qq];
     var sp = state.SP.getValue();
     sp -%= 1;
-    state.memory[sp] = rp.high;
+    state.write(sp, rp.high);
     sp -%= 1;
-    state.memory[sp] = rp.low;
+    state.write(sp, rp.low);
     state.SP.setValue(sp);
     state.PC +%= 1;
     return 11;
@@ -1001,9 +1001,9 @@ pub fn push_qq(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn push_xy(state: *Z80State, _: *const OpCode) u8 {
     var sp = state.SP.getValue();
     sp -%= 1;
-    state.memory[sp] = state.addr_register.high;
+    state.write(sp, state.addr_register.high);
     sp -%= 1;
-    state.memory[sp] = state.addr_register.low;
+    state.write(sp, state.addr_register.low);
     state.SP.setValue(sp);
     state.PC +%= 1;
     return 15;
@@ -1011,9 +1011,9 @@ pub fn push_xy(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn pop_af(state: *Z80State, _: *const OpCode) u8 {
     var sp = state.SP.getValue();
-    state.AF.setFlags(state.memory[sp]);
+    state.AF.setFlags(state.read(sp));
     sp +%= 1;
-    state.AF.A = state.memory[sp];
+    state.AF.A = state.read(sp);
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
@@ -1024,9 +1024,9 @@ pub fn pop_qq(state: *Z80State, opcode: *const OpCode) u8 {
     const qq = opcode.y >> 1;
     var rp = &state.gp_registers_pairs[qq];
     var sp = state.SP.getValue();
-    rp.low = state.memory[sp];
+    rp.low = state.read(sp);
     sp +%= 1;
-    rp.high = state.memory[sp];
+    rp.high = state.read(sp);
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
@@ -1035,9 +1035,9 @@ pub fn pop_qq(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn pop_xy(state: *Z80State, _: *const OpCode) u8 {
     var sp = state.SP.getValue();
-    state.addr_register.low = state.memory[sp];
+    state.addr_register.low = state.read(sp);
     sp +%= 1;
-    state.addr_register.high = state.memory[sp];
+    state.addr_register.high = state.read(sp);
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
@@ -1046,14 +1046,14 @@ pub fn pop_xy(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn call_nn(state: *Z80State, _: *const OpCode) u8 {
     var sp = state.SP.getValue();
-    const nn_low = state.memory[state.PC +% 1];
-    const nn_high = state.memory[state.PC +% 1 +% 1];
+    const nn_low = state.read(state.PC +% 1);
+    const nn_high = state.read(state.PC +% 1 +% 1);
     const nn: u16 = @intCast(nn_low | @as(u16, nn_high) << 8);
     sp -%= 1;
     state.PC +%= 3;
-    state.memory[sp] = @truncate((state.PC >> 8) & 0xFF);
+    state.write(sp, @truncate((state.PC >> 8) & 0xFF));
     sp -%= 1;
-    state.memory[sp] = @truncate(state.PC & 0xFF);
+    state.write(sp, @truncate(state.PC & 0xFF));
     state.SP.setValue(sp);
     state.PC = nn;
     state.WZ.low = nn_low;
@@ -1062,8 +1062,8 @@ pub fn call_nn(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn call_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
-    const nn_low = state.memory[state.PC +% 1];
-    const nn_high = state.memory[state.PC +% 1 +% 1];
+    const nn_low = state.read(state.PC +% 1);
+    const nn_high = state.read(state.PC +% 1 +% 1);
     state.PC +%= 3;
 
     if (evalFlagsCondition(state, opcode.y)) // y=ccc
@@ -1071,9 +1071,9 @@ pub fn call_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
         var sp = state.SP.getValue();
         const nn: u16 = @intCast(nn_low | @as(u16, nn_high) << 8);
         sp -%= 1;
-        state.memory[sp] = @truncate((state.PC >> 8) & 0xFF);
+        state.write(sp, @truncate((state.PC >> 8) & 0xFF));
         sp -%= 1;
-        state.memory[sp] = @truncate(state.PC & 0xFF);
+        state.write(sp, @truncate(state.PC & 0xFF));
         state.SP.setValue(sp);
         state.PC = nn;
         state.WZ.low = nn_low;
@@ -1089,9 +1089,9 @@ pub fn call_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
 
 pub fn ret(state: *Z80State, _: *const OpCode) u8 {
     var sp = state.SP.getValue();
-    const b_low = state.memory[sp];
+    const b_low = state.read(sp);
     sp +%= 1;
-    const b_high = state.memory[sp];
+    const b_high = state.read(sp);
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC = @intCast(b_low | @as(u16, b_high) << 8);
@@ -1101,21 +1101,20 @@ pub fn ret(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn ret_cc(state: *Z80State, opcode: *const OpCode) u8 {
-    var sp = state.SP.getValue();
-    const b_low = state.memory[sp];
-    sp +%= 1;
-    const b_high = state.memory[sp];
-    sp +%= 1;
-
     if (evalFlagsCondition(state, opcode.y)) // y=ccc
     {
+        var sp = state.SP.getValue();
+        const b_low = state.read(sp);
+        sp +%= 1;
+        const b_high = state.read(sp);
+        sp +%= 1;
         state.SP.setValue(sp);
         state.PC = @intCast(b_low | @as(u16, b_high) << 8);
-        return 10;
+        state.WZ.low = b_low;
+        state.WZ.high = b_high;
+        return 11;
     }
 
-    state.WZ.low = b_low;
-    state.WZ.high = b_high;
     state.PC +%= 1;
 
     return 5;
@@ -1304,18 +1303,36 @@ pub fn be_exx(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn be_ex_sp_hl(state: *Z80State, _: *const OpCode) u8 {
-    const sp = state.SP.getValue();
-    std.mem.swap(u8, &state.memory[sp], &state.HL.low);
-    std.mem.swap(u8, &state.memory[sp +% 1], &state.HL.high);
+    var sp = state.SP.getValue();
+
+    const i = state.read(sp);
+    state.write(sp, state.HL.low);
+    state.HL.low = i;
+
+    sp +%= 1;
+
+    const j = state.read(sp);
+    state.write(sp, state.HL.high);
+    state.HL.high = j;
+
     state.PC +%= 1;
     state.WZ.setValue(state.HL.getValue());
     return 19;
 }
 
 pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
-    const sp = state.SP.getValue();
-    std.mem.swap(u8, &state.memory[sp], &state.addr_register.low);
-    std.mem.swap(u8, &state.memory[sp +% 1], &state.addr_register.high);
+    var sp = state.SP.getValue();
+
+    const i = state.read(sp);
+    state.write(sp, state.addr_register.low);
+    state.addr_register.low = i;
+
+    sp +%= 1;
+
+    const j = state.read(sp);
+    state.write(sp, state.addr_register.high);
+    state.addr_register.high = j;
+
     state.WZ.setValue(state.addr_register.getValue());
     state.PC +%= 1;
     return 23;
@@ -1617,8 +1634,8 @@ pub inline fn evalFlagsCondition(state: *const Z80State, condition: u3) bool {
 }
 
 pub fn jp_nn(state: *Z80State, _: *const OpCode) u8 {
-    const low = state.memory[state.PC +% 1];
-    const high = state.memory[state.PC +% 2];
+    const low = state.read(state.PC +% 1);
+    const high = state.read(state.PC +% 2);
     const nn: u16 = @intCast(low | @as(u16, high) << 8);
     state.PC = nn;
     state.WZ.low = low;
@@ -1627,8 +1644,8 @@ pub fn jp_nn(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn jp_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
-    const low = state.memory[state.PC +% 1];
-    const high = state.memory[state.PC +% 2];
+    const low = state.read(state.PC +% 1);
+    const high = state.read(state.PC +% 2);
     const nn: u16 = @intCast(low | @as(u16, high) << 8);
     state.WZ.low = low;
     state.WZ.high = high;
@@ -1645,7 +1662,7 @@ pub fn jp_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn jr_e(state: *Z80State, _: *const OpCode) u8 {
     // NOTE: e actually is e - 2
     const pc: i32 = @intCast(state.PC);
-    const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+    const e: i8 = @bitCast(state.read(state.PC +% 1));
     const address: u16 = @intCast(@mod(pc + e + 2, 65536));
     state.PC = address;
     state.WZ.setValue(address);
@@ -1656,7 +1673,7 @@ pub fn jr_ss_e(state: *Z80State, opcode: *const OpCode) u8 {
     // opcode.y = 1ss where ss = cc.
     if (evalFlagsCondition(state, opcode.y & 0b011)) {
         const pc: i32 = @intCast(state.PC);
-        const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+        const e: i8 = @bitCast(state.read(state.PC +% 1));
         const address: u16 = @intCast(@mod(pc + e + 2, 65536));
         state.PC = address;
         state.WZ.setValue(address);
@@ -1673,7 +1690,7 @@ pub fn djnz(state: *Z80State, _: *const OpCode) u8 {
 
     if (b_dec != 0) {
         const pc: i32 = @intCast(state.PC);
-        const e: i8 = @bitCast(state.memory[state.PC +% 1]);
+        const e: i8 = @bitCast(state.read(state.PC +% 1));
         const address: u16 = @intCast(@mod(pc + e + 2, 65536));
         state.PC = address;
         state.WZ.setValue(address);
@@ -1773,6 +1790,14 @@ pub fn im_2(state: *Z80State, _: *const OpCode) u8 {
     state.IM = 2;
     state.PC +%= 1;
     return 8;
+}
+
+pub fn in_a_n(state: *Z80State, _: *const OpCode) u8 {
+    const port = readImmediate(state, 1);
+    const addr: u16 = @intCast(port | @as(u16, state.AF.A) << 8);
+    state.WZ = addr +% 1;
+    state.PC +% 2;
+    return 11;
 }
 
 pub fn daa(state: *Z80State, _: *const OpCode) u8 {
@@ -1917,7 +1942,7 @@ const xy_cb_instructions_table = [256]InstructionFn{
 };
 
 pub inline fn fetchOpcode(state: *Z80State) u8 {
-    const opcode: u8 = state.memory[state.PC];
+    const opcode: u8 = state.read(state.PC);
     state.R.increment();
     return opcode;
 }
@@ -1935,7 +1960,7 @@ pub fn testExec(state: *Z80State, opcode: u8) OpExecError!void {
     const decoded: *const OpCode = @ptrCast(&opcode);
     
     var table = &instructions_table;
-    var next = state.memory[state.PC +% 1];
+    var next = state.read(state.PC +% 1);
 
     switch (opcode) {
         0xdd => {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const host_endianess = @import("builtin").target.cpu.arch.endian();
 
 pub const SixteenBitRegister = packed struct {
@@ -165,6 +166,11 @@ pub const MemoryRefreshRegister = packed struct(u8) {
     }
 };
 
+pub const ReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
+pub const WriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
+pub const IOReadFnPtr = *const fn (ctx: *anyopaque, port: u16) u8;
+pub const IOWriteFnPtr = *const fn (ctx: *anyopaque, port: u16, value: u8) void;
+
 pub const Z80State = packed struct {
     // General-purpose registers
     BC: SixteenBitRegister = .{},
@@ -217,10 +223,6 @@ pub const Z80State = packed struct {
     I: u8 = 0, // interrupt page address (high-order byte)
     IM: u8 = 0,
 
-    // Interrupt Enable Flip-Flops
-    IFF1: bool = false, // Disables interrupts from being accepted
-    IFF2: bool = false, // Temporary storage location for IFF1
-
     addr_register: *SixteenBitRegister = undefined,
 
     // indexing over the 16 8-bit registers.
@@ -234,26 +236,42 @@ pub const Z80State = packed struct {
     q: *[8]*u8 = undefined, // B,C,D,E,IYh,IYl,A
     d: *[4]*SixteenBitRegister = undefined, // BC,DE,HL,SP
 
-    // memory
-    memory: [*]u8 = undefined,
-    memory_len: usize,
-
     // cycles
     cycles: usize = 0,
 
+    // inline vtable
+    ctx: *anyopaque,
+    readFn: ReadFnPtr,
+    writeFn: WriteFnPtr,
+
+    // Interrupt Enable Flip-Flops
+    // NOTE: MUST stay after the function pointers, see: https://github.com/ziglang/zig/issues/20539
+    IFF1: bool = false, // Disables interrupts from being accepted
+    IFF2: bool = false, // Temporary storage location for IFF1
+
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        ctx: anytype,
+        read_fn: ReadFnPtr,
+        write_fn: WriteFnPtr,
+    ) !*Self {
         var state = try allocator.create(Self);
+
+        const ptr_info = @typeInfo(@TypeOf(ctx));
+        assert(ptr_info == .Pointer); // must be a pointer
+        assert(ptr_info.Pointer.size == .One); // must be a single-item pointer
+        assert(@typeInfo(ptr_info.Pointer.child) == .Struct); // must point to a struct
+
+        state.ctx = @constCast(@ptrCast(@alignCast(ctx)));
+        state.readFn = read_fn;
+        state.writeFn = write_fn;
 
         // registers
         state.gp_registers = @ptrCast(state);
         state.gp_registers_pairs = @ptrCast(state);
 
-        // memory
-        const buff = try allocator.alloc(u8, 64 * 1024); // 64KB
-        state.memory_len = buff.len;
-        state.memory = buff.ptr;
         state.cycles = 0;
 
         // register sets (indexers)
@@ -297,8 +315,14 @@ pub const Z80State = packed struct {
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        const buff: []u8 = self.memory[0..self.memory_len];
-        allocator.free(buff);
         allocator.destroy(self);
+    }
+
+    pub fn read(self: *const Self, address: u16) u8 {
+        return self.readFn(self.ctx, address);
+    }
+
+    pub fn write(self: *const Self, address: u16, value: u8) void {
+        self.writeFn(self.ctx, address, value);
     }
 };
