@@ -168,8 +168,18 @@ pub const MemoryRefreshRegister = packed struct(u8) {
 
 pub const ReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
 pub const WriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
-pub const IOReadFnPtr = *const fn (ctx: *anyopaque, port: u16) u8;
-pub const IOWriteFnPtr = *const fn (ctx: *anyopaque, port: u16, value: u8) void;
+pub const IOReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
+pub const IOWriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
+pub const InterruptAck = *const fn (ctx: *anyopaque) u8;
+
+pub const Z80Signals = packed struct {
+    int_signal: bool = false,
+    nmi_signal: bool = false,
+    rst_signal: bool = false,
+};
+
+pub const LineLow = 0;
+pub const LineHigh = 1;
 
 pub const Z80State = packed struct {
     // General-purpose registers
@@ -241,13 +251,24 @@ pub const Z80State = packed struct {
 
     // inline vtable
     ctx: *anyopaque,
-    readFn: ReadFnPtr,
-    writeFn: WriteFnPtr,
+    memReadFn: ReadFnPtr,
+    memWriteFn: WriteFnPtr,
+    ioReadFn: IOReadFnPtr,
+    ioWriteFn: IOWriteFnPtr,
+    intAck: InterruptAck,
 
     // Interrupt Enable Flip-Flops
-    // NOTE: MUST stay after the function pointers, see: https://github.com/ziglang/zig/issues/20539
+    // NOTE: bool fields, MUST stay after the function pointers, see: https://github.com/ziglang/zig/issues/20539
+
     IFF1: bool = false, // Disables interrupts from being accepted
     IFF2: bool = false, // Temporary storage location for IFF1
+
+    // lines
+    int_line: u1 = LineHigh,
+    halt_line: u1 = LineHigh,
+
+    // signals
+    signals: Z80Signals = .{},
 
     const Self = @This();
 
@@ -256,6 +277,9 @@ pub const Z80State = packed struct {
         ctx: anytype,
         read_fn: ReadFnPtr,
         write_fn: WriteFnPtr,
+        io_read_fn: IOReadFnPtr,
+        io_write_fn: IOWriteFnPtr,
+        // int_ack: InterruptAck,
     ) !*Self {
         var state = try allocator.create(Self);
 
@@ -265,8 +289,11 @@ pub const Z80State = packed struct {
         assert(@typeInfo(ptr_info.Pointer.child) == .Struct); // must point to a struct
 
         state.ctx = @constCast(@ptrCast(@alignCast(ctx)));
-        state.readFn = read_fn;
-        state.writeFn = write_fn;
+        state.memReadFn = read_fn;
+        state.memWriteFn = write_fn;
+        state.ioReadFn = io_read_fn;
+        state.ioWriteFn = io_write_fn;
+        state.intAck = undefined;
 
         // registers
         state.gp_registers = @ptrCast(state);
@@ -318,11 +345,27 @@ pub const Z80State = packed struct {
         allocator.destroy(self);
     }
 
-    pub fn read(self: *const Self, address: u16) u8 {
-        return self.readFn(self.ctx, address);
+    pub fn memRead(self: *const Self, address: u16) u8 {
+        return self.memReadFn(self.ctx, address);
     }
 
-    pub fn write(self: *const Self, address: u16, value: u8) void {
-        self.writeFn(self.ctx, address, value);
+    pub fn memWrite(self: *const Self, address: u16, value: u8) void {
+        self.memWriteFn(self.ctx, address, value);
+    }
+
+    pub fn ioRead(self: *const Self, port: u16) u8 {
+        return self.ioReadFn(self.ctx, port);
+    }
+
+    pub fn ioWrite(self: *const Self, port: u16, value: u8) void {
+        self.ioWriteFn(self.ctx, port, value);
+    }
+
+    pub fn interruptAck(self: *const Self) u8 {
+        return self.intAck(self.ctx);
+    }
+
+    pub fn resetSignals(self: *Self) void {
+        self.signals = @bitCast(0);
     }
 };
