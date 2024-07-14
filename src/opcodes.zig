@@ -184,11 +184,11 @@ pub fn nop_nop(s: *Z80State, _: *const OpCode) u8 {
 }
 
 // acts as a NOP NOP
-pub fn ed_illegal(s: *Z80State, opcode: *const OpCode) u8 {
-    std.debug.print(
-        "Illegal opcode ED{x}: nop nop.\n",
-        .{@as(u8, @bitCast(opcode.*))},
-    );
+pub fn ed_illegal(s: *Z80State, _: *const OpCode) u8 {
+    // std.debug.print(
+    //     "Illegal opcode ED{x}: nop nop.\n",
+    //     .{@as(u8, @bitCast(opcode.*))},
+    // );
     s.PC +%= 1;
     return 8;
 }
