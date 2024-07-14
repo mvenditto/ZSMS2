@@ -8,6 +8,10 @@ pub inline fn getHighNibble(b: u8) u4 {
     return @intCast((b >> 4) & 0x0F);
 }
 
+pub inline fn nibblesToByte(low: u4, high: u4) u8 {
+    return low | (@as(u8, high) << 4);
+}
+
 /// Converts the bytes of a Binary Coded Decimal to its decimal representation.
 pub fn bcdToDecimal(d: []const u8) u32 {
     var res: u32 = 0;

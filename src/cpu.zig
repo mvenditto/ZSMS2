@@ -172,10 +172,10 @@ pub const IOReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
 pub const IOWriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
 pub const InterruptAck = *const fn (ctx: *anyopaque) u8;
 
-pub const Z80Signals = packed struct {
-    int_signal: bool = false,
-    nmi_signal: bool = false,
-    rst_signal: bool = false,
+pub const Z80Requests = packed struct(u3) {
+    int_signal: bool,
+    nmi_signal: bool,
+    rst_signal: bool,
 };
 
 pub const LineLow = 0;
@@ -245,6 +245,7 @@ pub const Z80State = packed struct {
     p: *[8]*u8 = undefined, // B,C,D,E,IXh,IXl,A
     q: *[8]*u8 = undefined, // B,C,D,E,IYh,IYl,A
     d: *[4]*SixteenBitRegister = undefined, // BC,DE,HL,SP
+    pq: *[8]*u8 = undefined,
 
     // cycles
     cycles: usize = 0,
@@ -263,12 +264,12 @@ pub const Z80State = packed struct {
     IFF1: bool = false, // Disables interrupts from being accepted
     IFF2: bool = false, // Temporary storage location for IFF1
 
+    // signals
+    requests: Z80Requests = .{},
+
     // lines
     int_line: u1 = LineHigh,
     halt_line: u1 = LineHigh,
-
-    // signals
-    signals: Z80Signals = .{},
 
     const Self = @This();
 
@@ -288,12 +289,40 @@ pub const Z80State = packed struct {
         assert(ptr_info.Pointer.size == .One); // must be a single-item pointer
         assert(@typeInfo(ptr_info.Pointer.child) == .Struct); // must point to a struct
 
+        state.PC = 0;
+        state.I = 0;
+        state.IFF1 = false;
+        state.IFF2 = false;
+
+        state.R.setValue(0);
+
+        state.BC.setValue(0xFFFF);
+        state.DE.setValue(0xFFFF);
+        state.HL.setValue(0xFFFF);
+        state.AF.setValue(0xFFFF);
+
+        state.IX.setValue(0xFFFF);
+        state.IY.setValue(0xFFFF);
+        state.SP.setValue(0xFFFF);
+        state.WZ.setValue(0xFFFF);
+
+        state.BC_.setValue(0xFFFF);
+        state.DE_.setValue(0xFFFF);
+        state.HL_.setValue(0xFFFF);
+        state.AF_.setValue(0xFFFF);
+
         state.ctx = @constCast(@ptrCast(@alignCast(ctx)));
         state.memReadFn = read_fn;
         state.memWriteFn = write_fn;
         state.ioReadFn = io_read_fn;
         state.ioWriteFn = io_write_fn;
         state.intAck = undefined;
+
+        state.requests = Z80Requests{
+            .int_signal = false,
+            .nmi_signal = false,
+            .rst_signal = false,
+        };
 
         // registers
         state.gp_registers = @ptrCast(state);
@@ -333,6 +362,8 @@ pub const Z80State = packed struct {
         const q_start = @offsetOf(Self, "_q0") / @sizeOf(*u8);
         state.q = indexed[q_start .. q_start + 8];
 
+        state.pq = state.p;
+
         const indexed2: [*]*SixteenBitRegister = @ptrCast(state);
 
         const d_start = @offsetOf(Self, "_d0") / @sizeOf(*u8);
@@ -366,6 +397,6 @@ pub const Z80State = packed struct {
     }
 
     pub fn resetSignals(self: *Self) void {
-        self.signals = @bitCast(0);
+        self.requests = @bitCast(0);
     }
 };

@@ -411,6 +411,14 @@ pub fn al2_a_hl(state: *Z80State, opcode: *const OpCode) u8 {
     return al2_a_x(.indirect, state, opcode);
 }
 
+pub fn al2_a_p(state: *Z80State, opcode: *const OpCode) u8 {
+    const value = state.pq[opcode.y].*;
+    const result = inc_dec_x(state, opcode, value);
+    state.pq[opcode.y].* = result;
+    state.PC +%= 1;
+    return 8;
+}
+
 pub fn al2_a_xy(state: *Z80State, opcode: *const OpCode) u8 {
     return al2_a_x(.indexed, state, opcode);
 }
@@ -638,11 +646,13 @@ pub fn xy_prefix(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn dd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IX;
+    state.pq = state.p;
     return xy_prefix(state, opcode);
 }
 
 pub fn fd_prefix(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register = &state.IY;
+    state.pq = state.q;
     return xy_prefix(state, opcode);
 }
 
@@ -893,6 +903,12 @@ pub fn ld_xy_nn(state: *Z80State, _: *const OpCode) u8 {
     return 14;
 }
 
+pub fn ld_xy_p_n(state: *Z80State, opcode: *const OpCode) u8 {
+    state.pq[opcode.y].* = readImmediate(state, 1);
+    state.PC +%= 2;
+    return 11;
+}
+
 pub fn ld_dd_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
     const rp = opcode.y >> 1; // y = 0bdd0
     const dd = state.d[rp];
@@ -1133,6 +1149,21 @@ pub fn ret_cc(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
 
     return 5;
+}
+
+pub fn rst_p(state: *Z80State, opcode: *const OpCode) u8 {
+    var sp = state.SP.getValue();
+    const pc = state.PC +% 1;
+    sp -%= 1;
+    state.memWrite(sp, @truncate((pc >> 8) & 0xFF));
+    sp -%= 1;
+    state.memWrite(sp, @truncate(pc & 0xFF));
+    state.SP.setValue(sp);
+    const p = @as(u8, @intCast(opcode.y)) * 8;
+    state.PC = p;
+    state.WZ.high = 0;
+    state.WZ.low = p;
+    return 11;
 }
 
 pub const IncDecOperation = enum {
@@ -1446,6 +1477,50 @@ pub fn rot_xy(state: *Z80State, opcode: *const OpCode) u8 {
     }
     state.PC +%= 2;
     return 23;
+}
+
+pub fn rld(state: *Z80State, _: *const OpCode) u8 {
+    const addr = state.HL.getValue();
+    const value = state.memRead(addr);
+    const lo_nib = byte.getLowNibble(value);
+    const hi_nib = byte.getHighNibble(value);
+    const a_lo_nib = byte.getLowNibble(state.AF.A);
+    const new_a = byte.nibblesToByte(hi_nib, byte.getHighNibble(state.AF.A));
+    state.AF.A = new_a;
+    const new_val = byte.nibblesToByte(a_lo_nib, lo_nib);
+    state.memWrite(addr, new_val);
+    state.AF.F.S = new_a & SF != 0;
+    state.AF.F.Z = new_a == 0;
+    state.AF.F.H = false;
+    state.AF.F.PV = hasEvenParity8(new_a);
+    state.AF.F.N = false;
+    state.AF.F.X = new_a & XF != 0;
+    state.AF.F.Y = new_a & YF != 0;
+    state.PC +%= 1;
+    state.WZ.setValue(addr +% 1);
+    return 18;
+}
+
+pub fn rrd(state: *Z80State, _: *const OpCode) u8 {
+    const addr = state.HL.getValue();
+    const value = state.memRead(addr);
+    const lo_nib = byte.getLowNibble(value);
+    const hi_nib = byte.getHighNibble(value);
+    const a_lo_nib = byte.getLowNibble(state.AF.A);
+    const new_a = byte.nibblesToByte(lo_nib, byte.getHighNibble(state.AF.A));
+    state.AF.A = new_a;
+    const new_val = byte.nibblesToByte(hi_nib, a_lo_nib);
+    state.memWrite(addr, new_val);
+    state.AF.F.S = new_a & SF != 0;
+    state.AF.F.Z = new_a == 0;
+    state.AF.F.H = false;
+    state.AF.F.PV = hasEvenParity8(new_a);
+    state.AF.F.N = false;
+    state.AF.F.X = new_a & XF != 0;
+    state.AF.F.Y = new_a & YF != 0;
+    state.PC +%= 1;
+    state.WZ.setValue(addr +% 1);
+    return 18;
 }
 
 pub fn rlca(state: *Z80State, _: *const OpCode) u8 {
@@ -2138,7 +2213,7 @@ pub fn retn(state: *Z80State, _: *const OpCode) u8 {
     _ = ret_(state);
     state.IFF1 = state.IFF2;
     if (state.IFF1 and state.int_line == LineLow) { // IFF1 and INT line is low
-        state.signals.int_signal = true;
+        state.requests.int_signal = true;
     }
     return 14;
 }
@@ -2147,7 +2222,7 @@ pub fn reti(state: *Z80State, _: *const OpCode) u8 {
     _ = ret_(state);
     state.IFF1 = state.IFF2;
     if (state.IFF1 and state.int_line == LineLow) { // IFF1 and INT line is low
-        state.signals.int_signal = true;
+        state.requests.int_signal = true;
     }
     return 14;
 }
@@ -2155,10 +2230,13 @@ pub fn reti(state: *Z80State, _: *const OpCode) u8 {
 pub fn halt(state: *Z80State, _: *const OpCode) u8 {
     state.halt_line = LineHigh;
 
+    state.PC +%= 1;
+
     while (true) {
         state.R.increment();
         state.cycles +%= 4;
-        if (@as(u3, @bitCast(state.signals)) > 0) {
+        const requests: u3 = @bitCast(state.requests);
+        if (requests > 0) {
             return 0;
         }
     }
@@ -2181,20 +2259,20 @@ const instructions_table = [256]InstructionFn{
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // 9
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // A
     al_a_r,    al_a_r,   al_a_r,       al_a_r,      al_a_r,     al_a_r,   al_a_hl,   al_a_r,    al_a_r,       al_a_r,    al_a_r,       al_a_r,      al_a_r,     al_a_r,    al_a_hl, al_a_r,    // B
-    ret_cc,    pop_qq,   jp_cc_nn,     jp_nn,       call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       ret,       jp_cc_nn,     cb_prefix,   call_cc_nn, call_nn,   al_a_n,  undefined, // C
-    ret_cc,    pop_qq,   jp_cc_nn,     io_out_n_a,  call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       be_exx,    jp_cc_nn,     io_in_a_n,   call_cc_nn, dd_prefix, al_a_n,  undefined, // D
-    ret_cc,    pop_qq,   jp_cc_nn,     be_ex_sp_hl, call_cc_nn, push_qq,  al_a_n,    undefined, ret_cc,       jp_hl,     jp_cc_nn,     be_ex_de_hl, call_cc_nn, ed_prefix, al_a_n,  undefined, // E
-    ret_cc,    pop_af,   jp_cc_nn,     di,          call_cc_nn, push_af,  al_a_n,    undefined, ret_cc,       ld_sp_hl,  jp_cc_nn,     ei,          call_cc_nn, fd_prefix, al_a_n,  undefined, // F
+    ret_cc,    pop_qq,   jp_cc_nn,     jp_nn,       call_cc_nn, push_qq,  al_a_n,    rst_p,     ret_cc,       ret,       jp_cc_nn,     cb_prefix,   call_cc_nn, call_nn,   al_a_n,  rst_p,     // C
+    ret_cc,    pop_qq,   jp_cc_nn,     io_out_n_a,  call_cc_nn, push_qq,  al_a_n,    rst_p,     ret_cc,       be_exx,    jp_cc_nn,     io_in_a_n,   call_cc_nn, dd_prefix, al_a_n,  rst_p,     // D
+    ret_cc,    pop_qq,   jp_cc_nn,     be_ex_sp_hl, call_cc_nn, push_qq,  al_a_n,    rst_p,     ret_cc,       jp_hl,     jp_cc_nn,     be_ex_de_hl, call_cc_nn, ed_prefix, al_a_n,  rst_p,     // E
+    ret_cc,    pop_af,   jp_cc_nn,     di,          call_cc_nn, push_af,  al_a_n,    rst_p,     ret_cc,       ld_sp_hl,  jp_cc_nn,     ei,          call_cc_nn, fd_prefix, al_a_n,  rst_p,     // F
 };
 
 // Indexed addressing XY opcodes
 // zig fmt: off
 const xy_instructions_table = [256]InstructionFn{
     //0         1            2             3            4          5             6           7           8           9           A             B             C             D           E           F
-    nop_nop,    xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_bc,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 0
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_de,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 1
-    xy_illegal, ld_xy_nn,   ld_nn_xy_ext, inc_dec_xy,  undefined,  undefined,    undefined,  xy_illegal, xy_illegal, add_xy_ix,  ld_xy_nn_ext, inc_dec_xy,   undefined,    undefined,  undefined,  xy_illegal, // 2
-    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_xy,   al2_a_xy,     ld_xy_n,    xy_illegal, xy_illegal, add_xy_sp,  xy_illegal,   xy_illegal,   undefined,    undefined,  undefined,  xy_illegal, // 3
+    nop_nop,    xy_illegal, xy_illegal,   xy_illegal,  al2_a_p,    al2_a_p,      ld_xy_p_n,  xy_illegal, xy_illegal, add_xy_bc,  xy_illegal,   xy_illegal,   al2_a_p,      al2_a_p,    ld_xy_p_n,  xy_illegal, // 0
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_p,    al2_a_p,      ld_xy_p_n,  xy_illegal, xy_illegal, add_xy_de,  xy_illegal,   xy_illegal,   al2_a_p,      al2_a_p,    ld_xy_p_n,  xy_illegal, // 1
+    xy_illegal, ld_xy_nn,   ld_nn_xy_ext, inc_dec_xy,  al2_a_p,    al2_a_p,      ld_xy_p_n,  xy_illegal, xy_illegal, add_xy_ix,  ld_xy_nn_ext, inc_dec_xy,   al2_a_p,      al2_a_p,    ld_xy_p_n,  xy_illegal, // 2
+    xy_illegal, xy_illegal, xy_illegal,   xy_illegal,  al2_a_xy,   al2_a_xy,     ld_xy_n,    xy_illegal, xy_illegal, add_xy_sp,  xy_illegal,   xy_illegal,   al2_a_p,      al2_a_p,    ld_xy_p_n,  xy_illegal, // 3
     nop_nop,    ld_u_r_r,   ld_u_r_r,     ld_u_r_r,    ld_p_xyh,   ld_p_xyl,     ld_r_xy,    ld_u_r_r,   ld_u_r_r,   nop_nop,    ld_u_r_r,     ld_u_r_r,     ld_p_xyh,     ld_p_xyl,   ld_r_xy,    ld_u_r_r,   // 4
     ld_u_r_r,   ld_u_r_r,   nop_nop,      ld_u_r_r,    ld_p_xyh,   ld_p_xyl,     ld_r_xy,    ld_u_r_r,   ld_u_r_r,   ld_u_r_r,   ld_u_r_r,     nop_nop,      ld_p_xyh,     ld_p_xyl,   ld_r_xy,    ld_u_r_r,   // 5
     ld_xyh_p,   ld_xyh_p,   ld_xyh_p,     ld_xyh_p,    nop_nop,    ld_p_xyh_xyl, ld_r_xy,    ld_xyh_p,   ld_xyl_p,   ld_xyl_p,   ld_xyl_p,     ld_xyl_p,     ld_p_xyl_xyh, nop_nop,    ld_r_xy,    ld_xyl_p,   // 6
@@ -2218,7 +2296,7 @@ const ed_instructions_table = [256]InstructionFn{
     ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 3
     io_in_r_c,  io_out_c_r, sbc_hl_bc,  ld_nn_dd_ext, neg,        retn,       im_0,       ld_i_a,     io_in_r_c,  io_out_c_r, adc_hl_bc,  ld_dd_nn_ext,  neg,        reti,       im_0,       ld_r_a,     // 4
     io_in_r_c,  io_out_c_r, sbc_hl_de,  ld_nn_dd_ext, neg,        retn,       im_1,       ld_a_i,     io_in_r_c,  io_out_c_r, adc_hl_de,  ld_dd_nn_ext,  neg,        retn,       im_2,       ld_a_r,     // 5
-    io_in_r_c,  io_out_c_r, sbc_hl_hl,  ld_nn_dd_ext, neg,        retn,       im_0,       undefined,  io_in_r_c,  io_out_c_r, adc_hl_hl,  ld_dd_nn_ext,  neg,        retn,       im_0,       undefined,  // 6
+    io_in_r_c,  io_out_c_r, sbc_hl_hl,  ld_nn_dd_ext, neg,        retn,       im_0,       rrd,        io_in_r_c,  io_out_c_r, adc_hl_hl,  ld_dd_nn_ext,  neg,        retn,       im_0,       rld,        // 6
     io_in_r_U,  io_out_c_0, sbc_hl_sp,  ld_nn_dd_ext, neg,        retn,       im_1,       ed_illegal, io_in_r_c,  io_out_c_r, adc_hl_sp,  ld_dd_nn_ext,  neg,        retn,       im_2,       ed_illegal, // 7
     ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 8
     ed_illegal, ed_illegal, ed_illegal, ed_illegal,   ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal, ed_illegal,    ed_illegal, ed_illegal, ed_illegal, ed_illegal, // 9
@@ -2289,10 +2367,10 @@ pub fn exec(state: *Z80State, opcode: u8) void {
 pub fn execLoop(state: *Z80State) void {
     while(true)
     {
-        const signals: u3 = @bitCast(state.signals);
+        const requests: u3 = @bitCast(state.requests);
         
-        if (signals > 0) {
-            if (state.signals.nmi_signal){ // non-maskable interrupts (NMI)
+        if (requests > 0) {
+            if (state.requests.nmi_signal){ // non-maskable interrupts (NMI)
                 state.iff1 = false;
                 if (state.halt_line == LineLow) state.halt_line = LineHigh;
                 state.R.increment();
@@ -2310,7 +2388,7 @@ pub fn execLoop(state: *Z80State) void {
                 state.cycles +%= 11;
                 continue;
             }
-            else if (state.signals.int_signal) { // maskable interrupts (INT)
+            else if (state.requests.int_signal) { // maskable interrupts (INT)
                 if (state.halt_line == LineLow) state.halt_line = LineHigh;
                 var sp = state.SP.getValue();
                 sp -%= 1;
