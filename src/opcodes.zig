@@ -192,6 +192,7 @@ pub fn ed_illegal(s: *Z80State, _: *const OpCode) u8 {
     //     .{@as(u8, @bitCast(opcode.*))},
     // );
     s.PC +%= 1;
+    s.resetQ();
     return 8;
 }
 
@@ -1670,9 +1671,11 @@ pub fn bit_r(state: *Z80State, opcode: *const OpCode) u8 {
         },
         2 => { // RES
             state.gp_registers[opcode.z] &= ~(@as(u8, 1) << n);
+            state.resetQ();
         },
         3 => { // SET
             state.gp_registers[opcode.z] |= @as(u8, 1) << n;
+            state.resetQ();
         },
         else => {},
     }
@@ -2361,14 +2364,26 @@ pub fn halt(state: *Z80State, _: *const OpCode) u8 {
 
     state.PC +%= 1;
 
+    if (processor.z80_bypass_halt) {
+        var remaining_cycles = state.max_cycles - state.cycles;
+        // remainder from remaining_cycles / 4 (where 4=nop T-states).
+        const misalignment4 = remaining_cycles & 3;
+        // & 3 ensures it is an amount in range 0-3
+        const adjustment = (4 - misalignment4) & 3;
+        // align to a multiple of 4
+        remaining_cycles += adjustment;
+        state.cycles += remaining_cycles;
+        const r = @as(u64, state.R.refresh_counter) +% remaining_cycles / 4;
+        state.R.refresh_counter = @truncate(r);
+        return 0;
+    }
+
     while (true) {
         state.R.increment();
         state.cycles +%= 4;
         state.resetQ(); // internal NOPs do not affect flags
         const requests: u3 = @bitCast(state.requests);
-        if (requests > 0) {
-            return 0;
-        }
+        if (requests > 0) break;
     }
 
     return 0;

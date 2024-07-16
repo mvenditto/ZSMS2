@@ -30,11 +30,19 @@ pub fn build(b: *std.Build) void {
     // b.installArtifact(lib);
 
     const build_options = b.addOptions();
+
     build_options.addOption(bool, "z80_sim_q", b.option(
         bool,
         "Z80_SIM_Q",
         "if true, simulate the Z80's Q undocumented behavior.",
     ) orelse true);
+
+    build_options.addOption(bool, "z80_bypass_halt", b.option(
+        bool,
+        "Z80_BYPASS_HALT",
+        "if true, the HALT will not be blocking (the state is kept consistent).",
+    ) orelse false);
+
     const build_options_mod = build_options.createModule();
 
     const exe = b.addExecutable(.{
@@ -92,6 +100,7 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
         run_z80_test_suite_cmd.addArgs(args);
+        run_single_step_tests_cmd.addArgs(args);
     }
 
     // This creates a build step. It will be visible in the `zig build --help` menu,

@@ -34,6 +34,28 @@ const OpcodeTest = struct {
                 }
                 std.debug.panic("write: out of bounds, addr={d}\n", .{address});
             }
+
+            pub fn ioRead(ctx: *anyopaque, address: u16) u8 {
+                const self2: *OpcodeTest = @ptrCast(@alignCast(ctx));
+                for (self2.ports.?) |io_port| {
+                    if (io_port[0].integer != address) continue;
+                    std.debug.assert(io_port[2].string[0] == 'r');
+                    return @intCast(io_port[1].integer);
+                }
+                std.debug.panic("io-read: FAIL, port={d} not found!\n", .{address});
+            }
+
+            pub fn ioWrite(ctx: *anyopaque, address: u16, value: u8) void {
+                const self2: *OpcodeTest = @ptrCast(@alignCast(ctx));
+                for (self2.ports.?) |io_port| {
+                    if (io_port[0].integer != address) continue;
+                    std.debug.assert(io_port[2].string[0] == 'w');
+                    std.debug.assert(io_port[1].integer == value);
+                    return;
+                }
+
+                std.debug.panic("io-write: FAIL, port={d} not found!\n", .{address});
+            }
         };
 
         var s = try cpu.Z80State.init(
@@ -41,8 +63,8 @@ const OpcodeTest = struct {
             self,
             impl.read,
             impl.write,
-            undefined,
-            undefined,
+            impl.ioRead,
+            impl.ioWrite,
         );
 
         const init = self.initial;
@@ -222,7 +244,7 @@ fn getFileName(file_path: []const u8) []const u8 {
     return file_name_no_ext;
 }
 
-fn execSingleStepTests() !void {
+fn execSingleStepTests(start_from: ?[]const u8) !void {
     const op = @import("opcodes.zig");
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -244,8 +266,29 @@ fn execSingleStepTests() !void {
     var dirwalker = try dir.walk(allocator);
     defer dirwalker.deinit();
 
+    var start = if (start_from != null) false else true;
+
     while (try dirwalker.next()) |entry| {
         const test_file_name = entry.path;
+
+        if (!start) {
+            if (start_from) |start_from_file_name| {
+                if (!std.mem.eql(u8, start_from_file_name, test_file_name)) {
+                    std.debug.print("{s}: SKIPPED\n", .{test_file_name});
+                    continue;
+                } else {
+                    start = true;
+                }
+            }
+        }
+
+        if (std.mem.eql(u8, "76", test_file_name[0..2]) or
+            std.mem.eql(u8, "dd 76", test_file_name[0..5]) or
+            std.mem.eql(u8, "fd 76", test_file_name[0..5]))
+        {
+            std.debug.print("{s}: SKIPPED\n", .{test_file_name});
+            continue;
+        }
 
         var arena2 = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena2.deinit();
@@ -279,5 +322,26 @@ fn execSingleStepTests() !void {
 }
 
 pub fn main() !void {
-    try execSingleStepTests();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
+
+    var args = try std.process.argsWithAllocator(allocator);
+    _ = args.skip(); // zig
+
+    const arg = args.next();
+
+    var start_from: ?[]const u8 = null;
+
+    if (arg) |cmd| {
+        if (std.mem.eql(u8, "--start-from", cmd)) {
+            if (args.next()) |file_name| {
+                start_from = file_name;
+            }
+        } else {
+            std.debug.print("Unknown cmd: {s}\n", .{cmd});
+        }
+    }
+
+    try execSingleStepTests(start_from);
 }

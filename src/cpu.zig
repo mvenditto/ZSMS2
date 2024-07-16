@@ -4,7 +4,8 @@ const host_endianess = @import("builtin").target.cpu.arch.endian();
 
 // build options
 const build_opts = @import("build_options");
-pub const z80_sim_q = @import("build_options").z80_sim_q;
+pub const z80_sim_q = build_opts.z80_sim_q;
+pub const z80_bypass_halt = build_opts.z80_bypass_halt;
 
 pub const SixteenBitRegister = packed struct {
     high: u8 = 0, // 0-7
@@ -253,7 +254,8 @@ pub const Z80State = packed struct {
     pq: *[8]*u8 = undefined,
 
     // cycles
-    cycles: usize = 0,
+    cycles: u64 = 0,
+    max_cycles: u64 = std.math.maxInt(u64),
 
     // inline vtable
     ctx: *anyopaque,
