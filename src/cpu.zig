@@ -2,6 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 const host_endianess = @import("builtin").target.cpu.arch.endian();
 
+// build options
+const build_opts = @import("build_options");
+pub const z80_sim_q = @import("build_options").z80_sim_q;
+
 pub const SixteenBitRegister = packed struct {
     high: u8 = 0, // 0-7
     low: u8 = 0, // 8-15
@@ -232,6 +236,7 @@ pub const Z80State = packed struct {
     R: MemoryRefreshRegister = .{}, // memory refresh
     I: u8 = 0, // interrupt page address (high-order byte)
     IM: u8 = 0,
+    Q: u8 = 0,
 
     addr_register: *SixteenBitRegister = undefined,
 
@@ -293,6 +298,10 @@ pub const Z80State = packed struct {
         state.I = 0;
         state.IFF1 = false;
         state.IFF2 = false;
+
+        if (build_opts.z80_sim_q) {
+            state.Q = 0;
+        }
 
         state.R.setValue(0);
 
@@ -398,5 +407,17 @@ pub const Z80State = packed struct {
 
     pub fn resetSignals(self: *Self) void {
         self.requests = @bitCast(0);
+    }
+
+    pub inline fn updateQ(self: *Self) void {
+        if (build_opts.z80_sim_q) {
+            self.Q = @bitCast(self.AF.F);
+        }
+    }
+
+    pub inline fn resetQ(self: *Self) void {
+        if (build_opts.z80_sim_q) {
+            self.Q = 0;
+        }
     }
 };

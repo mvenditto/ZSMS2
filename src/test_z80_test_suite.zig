@@ -1,7 +1,6 @@
 const std = @import("std");
 const cpu = @import("cpu.zig");
 const opcodes = @import("opcodes.zig");
-const StdInOut = @import("test.zig").StdInOut;
 
 const TestPlatform = enum {
     /// ZX Spectrum
@@ -13,6 +12,60 @@ const TestPlatform = enum {
 const TestFormat = enum {
     none,
     rak,
+};
+
+pub const TestIO = struct {
+    memory: [64 * 1024]u8,
+    ports: [256]u8,
+    platform: TestPlatform,
+
+    const Self = @This();
+
+    pub fn init(platform: TestPlatform) !*Self {
+        const s = try std.testing.allocator.create(Self);
+        s.memory = std.mem.zeroes([64 * 1024]u8);
+        s.ports = std.mem.zeroes([256]u8);
+        s.platform = platform;
+        return s;
+    }
+
+    pub fn deinit(self: *Self) void {
+        std.testing.allocator.destroy(self);
+    }
+
+    pub fn read(ctx: *const anyopaque, address: u16) u8 {
+        const self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+        return self.memory[address];
+    }
+
+    pub fn write(ctx: *anyopaque, address: u16, value: u8) void {
+        var self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+
+        // do not write outside ROM
+        if (self.platform == .spectrum and address <= 0x3FFF) {
+            return;
+        }
+
+        self.memory[address] = value;
+    }
+
+    pub fn ioRead(ctx: *const anyopaque, address: u16) u8 {
+        const self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+
+        const port: u8 = @truncate(address & 0xFF);
+
+        if (self.platform == .spectrum and port == 0xfe) { // PUA
+            return 0xbf; // needed by some IN tests
+        }
+
+        return self.ports[port];
+    }
+
+    pub fn ioWrite(ctx: *const anyopaque, address: u16, value: u8) void {
+        const self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
+        const port: u8 = @truncate(address & 0xFF);
+        self.ports[port] = value;
+    }
 };
 
 const TestRom = struct {
@@ -36,14 +89,16 @@ const TestRom = struct {
 
 const test_suite = [_]TestRom{
     TestRom{ .title = "Preliminary tests (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "prelim.com", .start_addr = 0x0100, .code_addr = 0, .code_size = 1280, .platform = .cpm },
-    TestRom{ .title = "Z80 instruction exerciser (doc) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexdoc.com", .start_addr = 0x0100, .code_addr = 0, .code_size = 8588, .platform = .cpm },
-    TestRom{ .title = "Z80 instruction exerciser (all) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexall.com", .start_addr = 0x0100, .code_addr = 0, .code_size = 8588, .platform = .cpm },
-    TestRom{ .title = "Diagnostics II V1.2 CPU Test (1981)", .author = "Supersoft Associates", .file_path = "CPUTEST.COM", .start_addr = 0x0100, .code_addr = 0, .code_size = 19200, .platform = .cpm }, // https://gitlab.com/retroabandon/cpm-re/-/tree/main/ss-cpudiag
-    TestRom{ .title = "Z80 Test suite (1.2a)", .author = "Patrik Rak", .file_path = "z80doc.tap", .start_addr = 0x8000, .code_addr = 91, .code_size = 14298, .platform = .spectrum, .format = .rak },
+    TestRom{ .title = "Z80 instruction exerciser (doc) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexdoc.com", .start_addr = 0x0100, .code_addr = 0, .code_size = 8704, .platform = .cpm },
+    TestRom{ .title = "Z80 instruction exerciser (all) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexall.com", .start_addr = 0x0100, .code_addr = 0, .code_size = 8704, .platform = .cpm },
+    TestRom{ .title = "Diagnostics II V1.2 CPU Test (Supersoft)", .author = "Supersoft Associates (1981)", .file_path = "CPUTEST.COM", .start_addr = 0x0100, .code_addr = 0, .code_size = 19200, .platform = .cpm }, // https://gitlab.com/retroabandon/cpm-re/-/tree/main/ss-cpudiag
+    TestRom{ .title = "Z80 Test suite (doc) (1.2a)", .author = "Patrik Rak", .file_path = "z80doc.tap", .start_addr = 0x8000, .code_addr = 91, .code_size = 14298, .platform = .spectrum, .format = .rak },
+    TestRom{ .title = "Z80 Test suite (all) (1.2a)", .author = "Patrik Rak", .file_path = "z80all.tap", .start_addr = 0x8000, .code_addr = 91, .code_size = 14298, .platform = .spectrum, .format = .rak },
+    TestRom{ .title = "Z80 Test suite (memptr) (1.2a)", .author = "Patrik Rak", .file_path = "z80memptr.tap", .start_addr = 0x8000, .code_addr = 91, .code_size = 14298, .platform = .spectrum, .format = .rak },
 };
 
 // see: http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch5.htm
-fn cpm_bdos(s: *cpu.Z80State, out: *[255:36]u8, idx: *usize, stdout: *const std.fs.File) !void {
+fn cpmBdos(s: *cpu.Z80State, out: *[255:36]u8, idx: *usize, stdout: *const std.fs.File) !void {
     const writer = stdout.writer();
 
     switch (s.BC.low) {
@@ -92,10 +147,10 @@ fn cpm_bdos(s: *cpu.Z80State, out: *[255:36]u8, idx: *usize, stdout: *const std.
     _ = opcodes.ret(s, &fakeOpcode);
 }
 
-fn run_test(test_rom: TestRom) !void {
+fn runTest(test_rom: TestRom) !void {
     const allocator = std.heap.page_allocator;
 
-    const base_path = try std.fs.cwd().realpathAlloc(allocator, ".//tests//roms");
+    const base_path = try std.fs.cwd().realpathAlloc(allocator, "./tests/roms");
     defer allocator.free(base_path);
 
     const full_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, test_rom.file_path });
@@ -111,10 +166,10 @@ fn run_test(test_rom: TestRom) !void {
     );
     defer file.close();
 
-    var io = StdInOut{
+    var io = TestIO{
         .memory = std.mem.zeroes([64 * 1024]u8),
         .ports = std.mem.zeroes([256]u8),
-        .buff = std.mem.zeroes([256]u8),
+        .platform = test_rom.platform,
     };
 
     var out: [255:36]u8 = std.mem.zeroes([255:36]u8); // 36 = $-terminated
@@ -128,10 +183,10 @@ fn run_test(test_rom: TestRom) !void {
     var s = try cpu.Z80State.init(
         std.heap.page_allocator,
         &io,
-        StdInOut.read,
-        StdInOut.write,
-        StdInOut.ioRead,
-        StdInOut.ioWrite,
+        TestIO.read,
+        TestIO.write,
+        TestIO.ioRead,
+        TestIO.ioWrite,
     );
     defer s.deinit(std.heap.page_allocator);
 
@@ -163,7 +218,6 @@ fn run_test(test_rom: TestRom) !void {
             io.memory[0x7003] = 0x76; // halt
             s.PC = 0x7000;
             io.ports[0xFE] = 0xBF;
-            std.debug.print(">>>> {d} == {d}\n\n", .{ s.ioRead(0x00fe), io.ports[0xFE] });
         },
         else => {},
     }
@@ -176,7 +230,7 @@ fn run_test(test_rom: TestRom) !void {
         if (test_rom.platform == .cpm) {
             switch (s.PC) {
                 0x0000 => break, // HALT
-                5 => try cpm_bdos(s, &out, &idx, stdout), // BDOS syscall
+                5 => try cpmBdos(s, &out, &idx, stdout), // BDOS syscall
                 else => {},
             }
         } else if (test_rom.platform == .spectrum) {
@@ -241,7 +295,7 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, "run", cmd)) {
             if (args.next()) |test_idx_str| {
                 const test_idx = try std.fmt.parseInt(usize, test_idx_str, 10);
-                try run_test(test_suite[test_idx]);
+                try runTest(test_suite[test_idx]);
             }
         } else {
             std.debug.print("Unknown cmd: {s}\n", .{cmd});

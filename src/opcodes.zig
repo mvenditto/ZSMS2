@@ -175,11 +175,13 @@ pub inline fn loadImmediateExtended(state: *const Z80State, dst: *SixteenBitRegi
 
 pub fn nop(s: *Z80State, _: *const OpCode) u8 {
     s.PC +%= 1;
+    s.resetQ();
     return 4;
 }
 
 pub fn nop_nop(s: *Z80State, _: *const OpCode) u8 {
     s.PC +%= 1;
+    s.resetQ();
     return 8;
 }
 
@@ -211,6 +213,7 @@ pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub inline fn adc_a_x(s: *Z80State, rhs: u8) void {
@@ -225,6 +228,7 @@ pub inline fn adc_a_x(s: *Z80State, rhs: u8) void {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub inline fn sub_a_x(s: *Z80State, rhs: u8) void {
@@ -239,6 +243,7 @@ pub inline fn sub_a_x(s: *Z80State, rhs: u8) void {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub inline fn sbc_a_x(s: *Z80State, rhs: u8) void {
@@ -253,6 +258,7 @@ pub inline fn sbc_a_x(s: *Z80State, rhs: u8) void {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub inline fn btw_a_x(comptime OP: BitwiseOp, s: *Z80State, rhs: u8) void {
@@ -274,6 +280,7 @@ pub inline fn btw_a_x(comptime OP: BitwiseOp, s: *Z80State, rhs: u8) void {
     s.AF.F.PV = hasEvenParity8(t);
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub fn and_a_x(s: *Z80State, rhs: u8) void {
@@ -299,6 +306,7 @@ pub fn cp_a_x(s: *Z80State, rhs: u8) void {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = rhs & XF != 0; // 3rd bit
     s.AF.F.Y = rhs & YF != 0; // 5th bit
+    s.updateQ();
 }
 
 pub fn inc_dec_x(s: *Z80State, opcode: *const OpCode, value: u8) u8 {
@@ -312,6 +320,7 @@ pub fn inc_dec_x(s: *Z80State, opcode: *const OpCode, value: u8) u8 {
     s.AF.F.S = t & SF != 0; // sign bit
     s.AF.F.X = t & XF != 0; // 3rd bit
     s.AF.F.Y = t & YF != 0; // 5th bit
+    s.updateQ();
     return t;
 }
 
@@ -450,6 +459,7 @@ pub inline fn add_16(dst: *SixteenBitRegister, src: *SixteenBitRegister, state: 
     state.AF.F.H = ((lhs ^ rhs ^ t) >> 8) & HF != 0;
     state.AF.F.X = xy & XF != 0;
     state.AF.F.Y = xy & YF != 0;
+    state.updateQ();
 
     state.WZ.setValue(dst.getValue() +% 1);
     dst.setValue(@truncate(t));
@@ -472,6 +482,7 @@ pub inline fn adc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     state.AF.F.Y = sxy & YF != 0;
     state.AF.F.Z = t16 == 0;
     state.AF.F.N = false;
+    state.updateQ();
 
     state.WZ.setValue(state.HL.getValue() +% 1);
     state.HL.setValue(t16);
@@ -494,6 +505,7 @@ pub inline fn sbc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     state.AF.F.Y = sxy & YF != 0;
     state.AF.F.Z = t16 == 0;
     state.AF.F.N = true;
+    state.updateQ();
 
     state.WZ.setValue(state.HL.getValue() +% 1);
     state.HL.setValue(t16);
@@ -502,11 +514,12 @@ pub inline fn sbc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
 // 0 0 s s q 0 1 1
 // ss - target register
 // q (0) = inc, (1) dec
-pub inline fn inc_dec_ss(_: *Z80State, opcode: *const OpCode, ss: *SixteenBitRegister) void {
+pub inline fn inc_dec_ss(s: *Z80State, opcode: *const OpCode, ss: *SixteenBitRegister) void {
     const dec: u8 = opcode.y & 1; // (0) inc, (1) dec
     const nf: u8 = dec << 1; // 2 if dec, 1 if inc
     const lhs = ss.getValue();
     const t = lhs +% 1 -% nf;
+    s.resetQ();
     ss.setValue(t);
 }
 
@@ -717,60 +730,70 @@ pub fn xy_xy_seq(state: *Z80State, _: *const OpCode) u8 {
 pub fn ld_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
 pub fn ld_u_r_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.gp_registers[opcode.z];
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_p_xyh(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.addr_register.high;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_xyh_p(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register.high = state.gp_registers[opcode.z];
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_p_xyl(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = state.addr_register.low;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_xyl_p(state: *Z80State, opcode: *const OpCode) u8 {
     state.addr_register.low = state.gp_registers[opcode.z];
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_p_xyh_xyl(state: *Z80State, _: *const OpCode) u8 {
     state.addr_register.high = state.addr_register.low;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_p_xyl_xyh(state: *Z80State, _: *const OpCode) u8 {
     state.addr_register.low = state.addr_register.high;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn ld_r_n(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readImmediate(state, 1);
     state.PC +%= 2;
+    state.resetQ();
     return 7;
 }
 
 pub fn ld_r_hl(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readIndirect(state, @intFromEnum(RegisterPairs.HL));
     state.PC +%= 1;
+    state.resetQ();
     return 7;
 }
 
@@ -779,6 +802,7 @@ pub fn ld_a_bc(state: *Z80State, _: *const OpCode) u8 {
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.BC));
     state.WZ.setValue(state.BC.getValue() +% 1);
     state.PC +%= 1;
+    state.resetQ();
     return 7;
 }
 
@@ -787,24 +811,28 @@ pub fn ld_a_de(state: *Z80State, _: *const OpCode) u8 {
     state.gp_registers[dst] = readIndirect(state, @intFromEnum(RegisterPairs.DE));
     state.WZ.setValue(state.DE.getValue() +% 1);
     state.PC +%= 1;
+    state.resetQ();
     return 7;
 }
 
 pub fn ld_r_xy(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readIndexed(state, 1);
     state.PC +%= 2;
+    state.resetQ();
     return 19;
 }
 
 pub fn ld_a_nn(state: *Z80State, opcode: *const OpCode) u8 {
     state.gp_registers[opcode.y] = readExtendedUpdateWZ(state, 1);
     state.PC +%= 3;
+    state.resetQ();
     return 13;
 }
 
 pub fn ld_nn_a(state: *Z80State, _: *const OpCode) u8 {
     storeExtendedUpdateWZ(state, state.AF.A, 1);
     state.PC +%= 3;
+    state.resetQ();
     return 13;
 }
 
@@ -818,6 +846,7 @@ pub fn ld_a_i(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.N = false;
     state.AF.F.X = state.I & XF != 0; // 3rd bit
     state.AF.F.Y = state.I & YF != 0; // 5th bit
+    state.updateQ();
     return 9;
 }
 
@@ -832,30 +861,35 @@ pub fn ld_a_r(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.N = false;
     state.AF.F.X = r & XF != 0; // 3rd bit
     state.AF.F.Y = r & YF != 0; // 5th bit
+    state.updateQ();
     return 9;
 }
 
 pub fn ld_i_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.I = state.AF.A;
+    state.resetQ();
     return 9;
 }
 
 pub fn ld_r_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.R.setValue(state.AF.A);
+    state.resetQ();
     return 9;
 }
 
 pub fn ld_hl_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC +%= 1;
     state.memWrite(state.HL.getValue(), state.gp_registers[opcode.z]);
+    state.resetQ();
     return 7;
 }
 
 pub fn ld_hl_n(state: *Z80State, _: *const OpCode) u8 {
     state.memWrite(state.HL.getValue(), readImmediate(state, 1));
     state.PC +%= 2;
+    state.resetQ();
     return 10;
 }
 
@@ -865,6 +899,7 @@ pub fn ld_bc_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.WZ.low = @truncate((rp +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
+    state.resetQ();
     return 7;
 }
 
@@ -874,12 +909,14 @@ pub fn ld_de_a(state: *Z80State, _: *const OpCode) u8 {
     state.PC +%= 1;
     state.WZ.low = @truncate((rp +% 1) & 0xFF);
     state.WZ.high = state.AF.A;
+    state.resetQ();
     return 7;
 }
 
 pub fn ld_xy_r(state: *Z80State, opcode: *const OpCode) u8 {
     storeIndexedUpdateWZ(state, readRegister(state, opcode.z), 1);
     state.PC +%= 2;
+    state.resetQ();
     return 19;
 }
 
@@ -887,6 +924,7 @@ pub fn ld_xy_n(state: *Z80State, _: *const OpCode) u8 {
     const value = readImmediate(state, 2);
     storeIndexedUpdateWZ(state, value, 1);
     state.PC +%= 3;
+    state.resetQ();
     return 19;
 }
 
@@ -894,18 +932,21 @@ pub fn ld_dd_nn(state: *Z80State, opcode: *const OpCode) u8 {
     const dd = opcode.y >> 1; // y = 0bdd0
     loadImmediateExtended(state, state.d[dd], 1);
     state.PC +%= 3;
+    state.resetQ();
     return 10;
 }
 
 pub fn ld_xy_nn(state: *Z80State, _: *const OpCode) u8 {
     loadImmediateExtended(state, state.addr_register, 1);
     state.PC +%= 3;
+    state.resetQ();
     return 14;
 }
 
 pub fn ld_xy_p_n(state: *Z80State, opcode: *const OpCode) u8 {
     state.pq[opcode.y].* = readImmediate(state, 1);
     state.PC +%= 2;
+    state.resetQ();
     return 11;
 }
 
@@ -920,6 +961,7 @@ pub fn ld_dd_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
     dd.high = state.memRead(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
+    state.resetQ();
     return 20;
 }
 
@@ -934,6 +976,7 @@ pub fn ld_hl_nn_ext(state: *Z80State, opcode: *const OpCode) u8 {
     dd.high = state.memRead(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
+    state.resetQ();
     return 16;
 }
 
@@ -947,6 +990,7 @@ pub fn ld_xy_nn_ext(state: *Z80State, _: *const OpCode) u8 {
     dd.high = state.memRead(addr_next);
     state.WZ.setValue(addr_next);
     state.PC +%= 3;
+    state.resetQ();
     return 20;
 }
 
@@ -959,6 +1003,7 @@ pub fn ld_nn_hl_ext(state: *Z80State, _: *const OpCode) u8 {
     state.memWrite(address +% 1, state.HL.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
+    state.resetQ();
     return 16;
 }
 
@@ -973,6 +1018,7 @@ pub fn ld_nn_dd_ext(state: *Z80State, opcode: *const OpCode) u8 {
     state.memWrite(address +% 1, dd.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
+    state.resetQ();
     return 20;
 }
 
@@ -986,6 +1032,7 @@ pub fn ld_nn_xy_ext(state: *Z80State, _: *const OpCode) u8 {
     state.memWrite(address +% 1, dd.high);
     state.WZ.setValue(address_next);
     state.PC +%= 3;
+    state.resetQ();
     return 20;
 }
 
@@ -993,6 +1040,7 @@ pub fn ld_sp_hl(state: *Z80State, _: *const OpCode) u8 {
     state.SP.high = state.HL.high;
     state.SP.low = state.HL.low;
     state.PC +%= 1;
+    state.resetQ();
     return 6;
 }
 
@@ -1000,6 +1048,7 @@ pub fn ld_sp_xy(state: *Z80State, _: *const OpCode) u8 {
     state.SP.high = state.addr_register.high;
     state.SP.low = state.addr_register.low;
     state.PC +%= 1;
+    state.resetQ();
     return 10;
 }
 
@@ -1009,6 +1058,7 @@ pub fn push_af(state: *Z80State, _: *const OpCode) u8 {
     state.SP.decrement();
     state.memWrite(state.SP.getValue(), @bitCast(state.AF.F));
     state.PC +%= 1;
+    state.resetQ();
     return 11;
 }
 
@@ -1022,6 +1072,7 @@ pub fn push_qq(state: *Z80State, opcode: *const OpCode) u8 {
     state.memWrite(sp, rp.low);
     state.SP.setValue(sp);
     state.PC +%= 1;
+    state.resetQ();
     return 11;
 }
 
@@ -1033,6 +1084,7 @@ pub fn push_xy(state: *Z80State, _: *const OpCode) u8 {
     state.memWrite(sp, state.addr_register.low);
     state.SP.setValue(sp);
     state.PC +%= 1;
+    state.resetQ();
     return 15;
 }
 
@@ -1044,6 +1096,7 @@ pub fn pop_af(state: *Z80State, _: *const OpCode) u8 {
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
+    state.resetQ();
     return 10;
 }
 
@@ -1057,6 +1110,7 @@ pub fn pop_qq(state: *Z80State, opcode: *const OpCode) u8 {
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
+    state.resetQ();
     return 10;
 }
 
@@ -1068,6 +1122,7 @@ pub fn pop_xy(state: *Z80State, _: *const OpCode) u8 {
     sp +%= 1;
     state.SP.setValue(sp);
     state.PC +%= 1;
+    state.resetQ();
     return 14;
 }
 
@@ -1085,6 +1140,7 @@ pub fn call_nn(state: *Z80State, _: *const OpCode) u8 {
     state.PC = nn;
     state.WZ.low = nn_low;
     state.WZ.high = nn_high;
+    state.resetQ();
     return 17;
 }
 
@@ -1105,11 +1161,13 @@ pub fn call_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
         state.PC = nn;
         state.WZ.low = nn_low;
         state.WZ.high = nn_high;
+        state.resetQ();
         return 17;
     }
 
     state.WZ.low = nn_low;
     state.WZ.high = nn_high;
+    state.resetQ();
 
     return 10;
 }
@@ -1124,6 +1182,7 @@ pub inline fn ret_(state: *Z80State) u8 {
     state.PC = @intCast(b_low | @as(u16, b_high) << 8);
     state.WZ.low = b_low;
     state.WZ.high = b_high;
+    state.resetQ();
     return 10;
 }
 
@@ -1143,9 +1202,11 @@ pub fn ret_cc(state: *Z80State, opcode: *const OpCode) u8 {
         state.PC = @intCast(b_low | @as(u16, b_high) << 8);
         state.WZ.low = b_low;
         state.WZ.high = b_high;
+        state.resetQ();
         return 11;
     }
 
+    state.resetQ();
     state.PC +%= 1;
 
     return 5;
@@ -1163,6 +1224,7 @@ pub fn rst_p(state: *Z80State, opcode: *const OpCode) u8 {
     state.PC = p;
     state.WZ.high = 0;
     state.WZ.low = p;
+    state.resetQ();
     return 11;
 }
 
@@ -1202,6 +1264,7 @@ pub inline fn bt_ld_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOpe
     state.AF.F.N = false;
     state.AF.F.X = t & XF != 0; // 3rd bit
     state.AF.F.Y = (t & 2) << 4 != 0; // 1st bit
+    state.updateQ();
 
     return 16;
 }
@@ -1212,12 +1275,11 @@ pub inline fn bt_ldr_x(state: *Z80State, opcode: *const OpCode, comptime op: Inc
     const bc = state.BC.getValue();
 
     if (bc != 0) {
-        if (bc != 1) {
-            state.WZ.setValue(state.PC);
-        }
         const pc = state.PC >> 8;
         state.AF.F.X = pc & XF != 0;
         state.AF.F.Y = pc & YF != 0;
+        state.updateQ();
+        state.WZ.setValue(state.PC);
         state.PC -%= 1;
         return 21;
     }
@@ -1272,6 +1334,7 @@ pub inline fn bs_cp_x(state: *Z80State, _: *const OpCode, comptime op: IncDecOpe
     state.AF.F.N = true;
     state.AF.F.X = t1 & XF != 0; // 3rd bit
     state.AF.F.Y = (t1 & 2) << 4 != 0; // 1st bit
+    state.updateQ();
 
     return .{ t0, bc };
 }
@@ -1295,25 +1358,23 @@ pub inline fn bs_cpr_x(state: *Z80State, opcode: *const OpCode, comptime op: Inc
     const t0 = r[0];
     const bc = r[1];
 
-    if (bc == 1 or t0 == 0) {
-        switch (op) {
-            inline .increment => {
-                state.WZ.increment();
-            },
-            inline .decrement => {
-                state.WZ.decrement();
-            },
-        }
-    } else {
-        state.WZ.setValue(state.PC);
-    }
-
     if (bc != 0 and t0 != 0) {
         state.PC -%= 1; // prefix
         const pc = state.PC >> 8;
         state.AF.F.X = pc & XF != 0;
         state.AF.F.Y = pc & YF != 0;
+        state.updateQ();
+        state.WZ.setValue(state.PC +% 1);
         return 21;
+    }
+
+    switch (op) {
+        inline .increment => {
+            state.WZ.increment();
+        },
+        inline .decrement => {
+            state.WZ.decrement();
+        },
     }
 
     state.PC +%= 1;
@@ -1331,12 +1392,14 @@ pub fn bs_cpdr(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn be_ex_de_hl(state: *Z80State, _: *const OpCode) u8 {
     std.mem.swap(processor.SixteenBitRegister, &state.DE, &state.HL);
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
 pub fn be_ex_af_af2(state: *Z80State, _: *const OpCode) u8 {
     std.mem.swap(processor.AccumulatorFlagsRegister, &state.AF, &state.AF_);
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
@@ -1345,6 +1408,7 @@ pub fn be_exx(state: *Z80State, _: *const OpCode) u8 {
     std.mem.swap(processor.SixteenBitRegister, &state.DE, &state.DE_);
     std.mem.swap(processor.SixteenBitRegister, &state.HL, &state.HL_);
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
@@ -1363,6 +1427,7 @@ pub fn be_ex_sp_hl(state: *Z80State, _: *const OpCode) u8 {
 
     state.PC +%= 1;
     state.WZ.setValue(state.HL.getValue());
+    state.resetQ();
     return 19;
 }
 
@@ -1381,6 +1446,7 @@ pub fn be_ex_sp_xy(state: *Z80State, _: *const OpCode) u8 {
 
     state.WZ.setValue(state.addr_register.getValue());
     state.PC +%= 1;
+    state.resetQ();
     return 23;
 }
 
@@ -1433,6 +1499,7 @@ pub inline fn rot_x(state: *Z80State, opcode: *const OpCode, value: u8) u8 {
     state.AF.F.S = res & SF != 0;
     state.AF.F.X = res & XF != 0;
     state.AF.F.Y = res & YF != 0;
+    state.updateQ();
 
     return res;
 }
@@ -1496,6 +1563,7 @@ pub fn rld(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.N = false;
     state.AF.F.X = new_a & XF != 0;
     state.AF.F.Y = new_a & YF != 0;
+    state.updateQ();
     state.PC +%= 1;
     state.WZ.setValue(addr +% 1);
     return 18;
@@ -1518,6 +1586,7 @@ pub fn rrd(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.N = false;
     state.AF.F.X = new_a & XF != 0;
     state.AF.F.Y = new_a & YF != 0;
+    state.updateQ();
     state.PC +%= 1;
     state.WZ.setValue(addr +% 1);
     return 18;
@@ -1531,6 +1600,7 @@ pub fn rlca(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.Y = value & YF != 0;
     state.AF.F.H = false;
     state.AF.F.N = false;
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1543,6 +1613,7 @@ pub fn rrca(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.Y = value & YF != 0;
     state.AF.F.H = false;
     state.AF.F.N = false;
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1557,6 +1628,7 @@ pub fn rla(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.Y = value & YF != 0;
     state.AF.F.H = false;
     state.AF.F.N = false;
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1571,6 +1643,7 @@ pub fn rra(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.Y = value & YF != 0;
     state.AF.F.H = false;
     state.AF.F.N = false;
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1593,6 +1666,7 @@ pub fn bit_r(state: *Z80State, opcode: *const OpCode) u8 {
             state.AF.F.PV = state.AF.F.Z;
             state.AF.F.X = r & XF != 0;
             state.AF.F.Y = r & YF != 0;
+            state.updateQ();
         },
         2 => { // RES
             state.gp_registers[opcode.z] &= ~(@as(u8, 1) << n);
@@ -1622,6 +1696,7 @@ pub fn bit_xy(state: *Z80State, opcode: *const OpCode) u8 {
             state.AF.F.PV = state.AF.F.Z;
             state.AF.F.X = state.WZ.high & XF != 0;
             state.AF.F.Y = state.WZ.high & YF != 0;
+            state.updateQ();
             cycles = 20;
         },
         2 => { // RES
@@ -1630,6 +1705,7 @@ pub fn bit_xy(state: *Z80State, opcode: *const OpCode) u8 {
             if (opcode.z != 6) {
                 state.gp_registers[opcode.z] = res;
             }
+            state.resetQ();
             cycles = 23;
         },
         3 => { // SET
@@ -1638,6 +1714,7 @@ pub fn bit_xy(state: *Z80State, opcode: *const OpCode) u8 {
             if (opcode.z != 6) {
                 state.gp_registers[opcode.z] = res;
             }
+            state.resetQ();
             cycles = 23;
         },
         else => {},
@@ -1668,14 +1745,17 @@ pub fn bit_hl(state: *Z80State, opcode: *const OpCode) u8 {
             state.AF.F.N = false;
             state.AF.F.X = state.WZ.high & XF != 0;
             state.AF.F.Y = state.WZ.high & YF != 0;
+            state.updateQ();
             cycles = 12;
         },
         2 => { // RES
             storeIndirect(state, r & ~(@as(u8, 1) << n), hl);
+            state.resetQ();
             cycles = 15;
         },
         3 => { // SET
             storeIndirect(state, r | @as(u8, 1) << n, hl);
+            state.resetQ();
             cycles = 15;
         },
         else => {},
@@ -1730,6 +1810,7 @@ pub fn jp_nn(state: *Z80State, _: *const OpCode) u8 {
     state.PC = nn;
     state.WZ.low = low;
     state.WZ.high = high;
+    state.resetQ();
     return 10;
 }
 
@@ -1739,6 +1820,7 @@ pub fn jp_cc_nn(state: *Z80State, opcode: *const OpCode) u8 {
     const nn: u16 = @intCast(low | @as(u16, high) << 8);
     state.WZ.low = low;
     state.WZ.high = high;
+    state.resetQ();
 
     if (evalFlagsCondition(state, opcode.y)) {
         state.PC = nn;
@@ -1756,10 +1838,12 @@ pub fn jr_e(state: *Z80State, _: *const OpCode) u8 {
     const address: u16 = @intCast(@mod(pc + e + 2, 65536));
     state.PC = address;
     state.WZ.setValue(address);
+    state.resetQ();
     return 12;
 }
 
 pub fn jr_ss_e(state: *Z80State, opcode: *const OpCode) u8 {
+    state.resetQ();
     // opcode.y = 1ss where ss = cc.
     if (evalFlagsCondition(state, opcode.y & 0b011)) {
         const pc: i32 = @intCast(state.PC);
@@ -1777,6 +1861,7 @@ pub fn jr_ss_e(state: *Z80State, opcode: *const OpCode) u8 {
 pub fn djnz(state: *Z80State, _: *const OpCode) u8 {
     const b_dec = state.BC.high -% 1;
     state.BC.high = b_dec;
+    state.resetQ();
 
     if (b_dec != 0) {
         const pc: i32 = @intCast(state.PC);
@@ -1793,11 +1878,13 @@ pub fn djnz(state: *Z80State, _: *const OpCode) u8 {
 
 pub fn jp_hl(state: *Z80State, _: *const OpCode) u8 {
     state.PC = state.HL.getValue();
+    state.resetQ();
     return 4;
 }
 
 pub fn jp_xy(state: *Z80State, _: *const OpCode) u8 {
     state.PC = state.addr_register.getValue();
+    state.resetQ();
     return 8;
 }
 
@@ -1807,6 +1894,7 @@ pub fn cpl(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = true;
     state.AF.F.X = t & XF != 0;
     state.AF.F.Y = t & YF != 0;
+    state.updateQ();
     state.AF.A = t;
     state.PC +%= 1;
     return 4;
@@ -1824,6 +1912,7 @@ pub fn neg(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.C = acc != 0;
     state.AF.F.X = t & XF != 0;
     state.AF.F.Y = t & YF != 0;
+    state.updateQ();
     state.AF.A = t;
     state.PC +%= 1;
     return 8;
@@ -1833,8 +1922,17 @@ pub fn scf(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.C = true;
     state.AF.F.N = false;
     state.AF.F.H = false;
-    state.AF.F.X = state.AF.A & XF != 0;
-    state.AF.F.Y = state.AF.A & YF != 0;
+
+    if (processor.z80_sim_q) {
+        const fq = ((state.AF.getFlags() ^ state.Q) & 40) | state.AF.A;
+        state.AF.F.X = fq & XF != 0;
+        state.AF.F.Y = fq & YF != 0;
+    } else {
+        state.AF.F.X = state.AF.A & XF != 0;
+        state.AF.F.Y = state.AF.A & YF != 0;
+    }
+
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1844,8 +1942,17 @@ pub fn ccf(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.C = !cf;
     state.AF.F.H = cf;
     state.AF.F.N = false;
-    state.AF.F.X = state.AF.A & XF != 0;
-    state.AF.F.Y = state.AF.A & YF != 0;
+
+    if (processor.z80_sim_q) {
+        const fq = state.AF.A | (state.AF.getFlags() ^ state.Q);
+        state.AF.F.X = fq & XF != 0;
+        state.AF.F.Y = fq & YF != 0;
+    } else {
+        state.AF.F.X = state.AF.A & XF != 0;
+        state.AF.F.Y = state.AF.A & YF != 0;
+    }
+
+    state.updateQ();
     state.PC +%= 1;
     return 4;
 }
@@ -1854,6 +1961,7 @@ pub fn di(state: *Z80State, _: *const OpCode) u8 {
     state.IFF1 = false;
     state.IFF2 = false;
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
@@ -1861,24 +1969,28 @@ pub fn ei(state: *Z80State, _: *const OpCode) u8 {
     state.IFF1 = true;
     state.IFF2 = true;
     state.PC +%= 1;
+    state.resetQ();
     return 4;
 }
 
 pub fn im_0(state: *Z80State, _: *const OpCode) u8 {
     state.IM = 0;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn im_1(state: *Z80State, _: *const OpCode) u8 {
     state.IM = 1;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
 pub fn im_2(state: *Z80State, _: *const OpCode) u8 {
     state.IM = 2;
     state.PC +%= 1;
+    state.resetQ();
     return 8;
 }
 
@@ -1909,6 +2021,7 @@ pub fn daa(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = (state.AF.A ^ t) & HF != 0;
     state.AF.F.PV = hasEvenParity8(t);
     state.AF.F.C = prev_carry or bcd_carry;
+    state.updateQ();
 
     state.AF.A = t;
 
@@ -1923,6 +2036,7 @@ pub fn io_in_a_n(state: *Z80State, _: *const OpCode) u8 {
     state.AF.A = state.ioRead(addr);
     state.WZ.setValue(addr +% 1);
     state.PC +%= 1;
+    state.resetQ();
     return 11;
 }
 
@@ -1934,6 +2048,7 @@ pub fn io_out_n_a(state: *Z80State, _: *const OpCode) u8 {
     state.WZ.low = port +% 1;
     state.WZ.high = state.AF.A;
     state.PC +%= 1;
+    state.resetQ();
     return 11;
 }
 
@@ -1948,6 +2063,7 @@ pub fn io_in_r_c(state: *Z80State, opcode: *const OpCode) u8 {
     state.AF.F.Y = data & YF != 0;
     state.AF.F.N = false;
     state.AF.F.Z = data == 0;
+    state.updateQ();
     state.PC +%= 1;
     state.WZ.setValue(addr +% 1);
     return 12;
@@ -1963,6 +2079,7 @@ pub fn io_in_r_U(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.Y = data & YF != 0;
     state.AF.F.N = false;
     state.AF.F.Z = data == 0;
+    state.updateQ();
     state.PC +%= 1;
     state.WZ.setValue(addr +% 1);
     return 12;
@@ -1984,6 +2101,7 @@ pub inline fn io_ini_x(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = t > 255;
     state.AF.F.C = state.AF.F.H;
     state.AF.F.N = (data >> 6) & NF != 0; // 7th bit
+    state.updateQ();
     state.WZ.setValue(state.BC.getValue() +% 1);
     state.BC.high = B;
     return data;
@@ -2018,6 +2136,7 @@ pub fn io_inir(state: *Z80State, opcode: *const OpCode) u8 {
         } else {
             state.AF.F.PV = p ^ z80Parity(B & 0x7) ^ 1 != 0;
         }
+        state.updateQ();
         return 21;
     }
 
@@ -2041,6 +2160,7 @@ pub inline fn io_ind_x(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = t > 255;
     state.AF.F.C = state.AF.F.H;
     state.AF.F.N = (data >> 6) & NF != 0; // 7th bit
+    state.updateQ();
     state.WZ.setValue(state.BC.getValue() -% 1);
     state.BC.high = B;
     return data;
@@ -2075,6 +2195,7 @@ pub fn io_indr(state: *Z80State, opcode: *const OpCode) u8 {
         } else {
             state.AF.F.PV = p ^ z80Parity(B & 0x7) ^ 1 != 0;
         }
+        state.updateQ();
         return 21;
     }
 
@@ -2088,6 +2209,7 @@ pub fn io_out_c_r(state: *Z80State, opcode: *const OpCode) u8 {
     state.ioWrite(addr, data);
     state.WZ.setValue(addr +% 1);
     state.PC +%= 1;
+    state.resetQ();
     return 12;
 }
 
@@ -2096,6 +2218,7 @@ pub fn io_out_c_0(state: *Z80State, _: *const OpCode) u8 {
     state.ioWrite(addr, 0);
     state.WZ.setValue(addr +% 1);
     state.PC +%= 1;
+    state.resetQ();
     return 12;
 }
 
@@ -2115,6 +2238,7 @@ pub inline fn io_outi_x(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = t > 255;
     state.AF.F.C = state.AF.F.H;
     state.AF.F.N = (data >> 6) & NF != 0; // 7th bit
+    state.updateQ();
     state.WZ.setValue(state.BC.getValue() +% 1);
     return data;
 }
@@ -2147,6 +2271,7 @@ pub fn io_otir(state: *Z80State, opcode: *const OpCode) u8 {
         } else {
             state.AF.F.PV = p ^ z80Parity(B & 0x7) ^ 1 != 0;
         }
+        state.updateQ();
         return 21;
     }
 
@@ -2170,6 +2295,7 @@ pub inline fn io_outd_x(state: *Z80State, _: *const OpCode) u8 {
     state.AF.F.H = t > 255;
     state.AF.F.C = state.AF.F.H;
     state.AF.F.N = (data >> 6) & NF != 0; // 7th bit
+    state.updateQ();
     state.WZ.setValue(state.BC.getValue() -% 1);
     return data;
 }
@@ -2202,6 +2328,7 @@ pub fn io_otdr(state: *Z80State, opcode: *const OpCode) u8 {
         } else {
             state.AF.F.PV = p ^ z80Parity(B & 0x7) ^ 1 != 0;
         }
+        state.updateQ();
         return 21;
     }
 
@@ -2215,6 +2342,7 @@ pub fn retn(state: *Z80State, _: *const OpCode) u8 {
     if (state.IFF1 and state.int_line == LineLow) { // IFF1 and INT line is low
         state.requests.int_signal = true;
     }
+    state.resetQ();
     return 14;
 }
 
@@ -2224,6 +2352,7 @@ pub fn reti(state: *Z80State, _: *const OpCode) u8 {
     if (state.IFF1 and state.int_line == LineLow) { // IFF1 and INT line is low
         state.requests.int_signal = true;
     }
+    state.resetQ();
     return 14;
 }
 
@@ -2235,6 +2364,7 @@ pub fn halt(state: *Z80State, _: *const OpCode) u8 {
     while (true) {
         state.R.increment();
         state.cycles +%= 4;
+        state.resetQ(); // internal NOPs do not affect flags
         const requests: u3 = @bitCast(state.requests);
         if (requests > 0) {
             return 0;
