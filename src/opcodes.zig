@@ -462,15 +462,15 @@ pub inline fn adc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     const t = @as(u32, lhs) +% rhs +% carry;
     const t16: u16 = @truncate(t);
 
-    const xy: u8 = @truncate(t >> 8);
+    const sxy: u16 = @truncate(t >> 8);
 
     state.AF.F.C = (t >> 16) & 1 != 0;
     state.AF.F.H = ((lhs ^ rhs ^ t) >> 8) & HF != 0;
     state.AF.F.PV = overflow(u16, t16, lhs, ~rhs) != 0;
-    state.AF.F.S = xy & SF != 0;
-    state.AF.F.X = xy & XF != 0;
-    state.AF.F.Y = xy & YF != 0;
-    state.AF.F.Z = t == 0;
+    state.AF.F.S = sxy & SF != 0;
+    state.AF.F.X = sxy & XF != 0;
+    state.AF.F.Y = sxy & YF != 0;
+    state.AF.F.Z = t16 == 0;
     state.AF.F.N = false;
 
     state.WZ.setValue(state.HL.getValue() +% 1);
@@ -484,15 +484,15 @@ pub inline fn sbc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
     const t = @as(u32, lhs) -% rhs -% carry;
     const t16: u16 = @truncate(t);
 
-    const xy: u8 = @truncate(t >> 8);
+    const sxy: u16 = @truncate(t >> 8);
 
     state.AF.F.C = (t >> 16) & 1 != 0;
     state.AF.F.H = ((lhs ^ rhs ^ t) >> 8) & HF != 0;
     state.AF.F.PV = overflow(u16, t16, lhs, rhs) != 0;
-    state.AF.F.S = xy & SF != 0;
-    state.AF.F.X = xy & XF != 0;
-    state.AF.F.Y = xy & YF != 0;
-    state.AF.F.Z = t == 0;
+    state.AF.F.S = sxy & SF != 0;
+    state.AF.F.X = sxy & XF != 0;
+    state.AF.F.Y = sxy & YF != 0;
+    state.AF.F.Z = t16 == 0;
     state.AF.F.N = true;
 
     state.WZ.setValue(state.HL.getValue() +% 1);
