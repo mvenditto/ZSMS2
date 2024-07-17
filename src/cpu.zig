@@ -1,12 +1,15 @@
+//! This file contains the structures to represent a Z80 CPU state.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const host_endianess = @import("builtin").target.cpu.arch.endian();
 
-// build options
 const build_opts = @import("build_options");
+/// If true simulates Q, otherwise do not. Affects how SCF/CCF flags are calculated.
 pub const z80_sim_q = build_opts.z80_sim_q;
 pub const z80_bypass_halt = build_opts.z80_bypass_halt;
 
+/// Represents a 16-bit register.
 pub const SixteenBitRegister = packed struct {
     high: u8 = 0, // 0-7
     low: u8 = 0, // 8-15
@@ -34,10 +37,12 @@ pub const SixteenBitRegister = packed struct {
         self.high -%= borrow;
     }
 
+    /// Sets the low byte of the register.
     pub inline fn setLow(self: *SixteenBitRegister, value: u8) void {
         self.low = value;
     }
 
+    /// Sets the high byte of the register.
     pub inline fn setHigh(self: *SixteenBitRegister, value: u8) void {
         self.high = value;
     }
@@ -50,7 +55,7 @@ pub const SixteenBitRegister = packed struct {
     }
 };
 
-/// The Flag registers supply information about the status of the Z80 CPU.
+/// The Flag registers (F) that supply information about the status of the Z80 CPU.
 pub const FlagsRegister = packed struct {
     /// Carry flag
     C: bool = false, // 0
@@ -83,6 +88,7 @@ pub const FlagsRegister = packed struct {
     }
 };
 
+/// The 16-bit register that stores the accumulator (A) and flags (F).
 pub const AccumulatorFlagsRegister = packed struct {
     F: FlagsRegister = .{},
     A: u8 = 0,
@@ -148,10 +154,13 @@ pub const RegisterPairs2 = enum(u8) {
     AF = 3,
 };
 
-// see: http://www.z80.info/z80_faq.htm#Q-1
+/// The 8-bit memory refresh register (R).
+/// see: http://www.z80.info/z80_faq.htm#Q-1
 pub const MemoryRefreshRegister = packed struct(u8) {
-    refresh_counter: u7 = 0, // 7-bits refresh counter, incremented on every fetch.
-    R7: u1 = 0, // 8th bit, remains as programmed from an LD R, A instruction.
+    /// 7-bits refresh counter, incremented on every fetch.
+    refresh_counter: u7 = 0,
+    /// 8th bit, remains as programmed (e.g from an LD R, A instruction).
+    R7: u1 = 0,
 
     const Self = @This();
 
@@ -171,21 +180,61 @@ pub const MemoryRefreshRegister = packed struct(u8) {
     }
 };
 
-pub const ReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
-pub const WriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
-pub const IOReadFnPtr = *const fn (ctx: *anyopaque, address: u16) u8;
-pub const IOWriteFnPtr = *const fn (ctx: *anyopaque, address: u16, value: u8) void;
+// I/O functions
+
+/// Called by the emulator when a memory **read** is required.
+/// Must return the byte read from `address`.
+pub const ReadFnPtr = *const fn (
+    /// The context, as passed when initializing the `Z80State`.
+    ctx: *anyopaque,
+    /// The 16-bit address to read from.
+    address: u16,
+) u8;
+
+/// Called by the emulator when a **write** read is required.
+pub const WriteFnPtr = *const fn (
+    /// The context, as passed when initializing the `Z80State`.
+    ctx: *anyopaque,
+    /// The 16-bit address to write `value`to.
+    address: u16,
+    /// The value to write at the specified memory location.
+    value: u8,
+) void;
+
+/// Called by the emulator when an I/O **read** is required.
+/// Must return the byte read from the specified port.
+pub const IOReadFnPtr = *const fn (
+    /// The context, as passed when initializing the `Z80State`.
+    ctx: *anyopaque,
+    /// The address from the address-bus. The low byte represents the`port`.
+    address: u16,
+) u8;
+
+/// Called by the emulator when an I/O **write** is required.
+pub const IOWriteFnPtr = *const fn (
+    /// The context, as passed when initializing the `Z80State`.
+    ctx: *anyopaque,
+    /// The address from the address-bus. The low byte represents the `port`.
+    address: u16,
+    /// The value to write at the specified I/O port.
+    value: u8,
+) void;
+
 pub const InterruptAck = *const fn (ctx: *anyopaque) u8;
 
 pub const Z80Requests = packed struct(u3) {
+    /// Maskable interrupt request.
     int_signal: bool,
+    /// Non-maskable interrupt request.
     nmi_signal: bool,
+    /// Reset request.
     rst_signal: bool,
 };
 
 pub const LineLow = 0;
 pub const LineHigh = 1;
 
+/// The state of the emulated Z80 CPU.
 pub const Z80State = packed struct {
     // General-purpose registers
     BC: SixteenBitRegister = .{},
@@ -204,7 +253,7 @@ pub const Z80State = packed struct {
     IX: SixteenBitRegister = .{}, // index register x
     IY: SixteenBitRegister = .{}, // index register y
 
-    // The MEMPTR, see: https://zx-pk.ru/attachment.php?attachmentid=2989
+    // The MEMPTR, see: https://github.com/floooh/emu-info/blob/master/z80/memptr_eng.txt
     WZ: SixteenBitRegister = .{}, // aka MEMPTR
 
     // Index: B,C,D,E,IXh,IXl,A
@@ -233,28 +282,51 @@ pub const Z80State = packed struct {
     _d2: *SixteenBitRegister = undefined, // D
     _d3: *SixteenBitRegister = undefined, // E
 
-    PC: u16 = 0, // program counter
-    R: MemoryRefreshRegister = .{}, // memory refresh
-    I: u8 = 0, // interrupt page address (high-order byte)
+    /// The Program Counter.
+    PC: u16 = 0,
+
+    /// The memory Refresh counter.
+    R: MemoryRefreshRegister = .{},
+
+    /// The Interrupt page address (high-order byte).
+    I: u8 = 0,
+
+    /// The interrupt mode.
     IM: u8 = 0,
+
+    /// Updated by every instruction based on wherever or not Flags were affected:
+    /// * Flags affected: Q <- F.
+    /// * Flags NOT affected: Q <- 0.
+    ///
+    /// Q affects SCF/CCF flags calculation.
     Q: u8 = 0,
 
+    /// Either IX or IY, based on what FD/DD prefix was fetched last.
     addr_register: *SixteenBitRegister = undefined,
 
-    // indexing over the 16 8-bit registers.
+    /// Index {B, C, D, E, H, L, A, F, B', C', ..., F'}.
+    /// General purpose register + shadow registers.
     gp_registers: *[16]u8 = undefined,
 
-    // indexing over the 8 16-bit registers
+    /// Index {BC, DE, HL, AF}.
     gp_registers_pairs: *[4]SixteenBitRegister = undefined,
 
-    // Other register indexes
-    p: *[8]*u8 = undefined, // B,C,D,E,IXh,IXl,A
-    q: *[8]*u8 = undefined, // B,C,D,E,IYh,IYl,A
+    /// Index: {B, C, D, E, IXh, IXl, A}.
+    p: *[8]*u8 = undefined,
+
+    /// Index {B, C, D, E, IYh, IYl, A}.
+    q: *[8]*u8 = undefined,
+
+    /// Index {BC, DE, HL, SP}. Featuring SP instead of AF.
     d: *[4]*SixteenBitRegister = undefined, // BC,DE,HL,SP
+
+    /// Either `p` or `q`, based on what FD/DD prefix was fetched last.
     pq: *[8]*u8 = undefined,
 
-    // cycles
+    /// The count of emulated T-cycles.
     cycles: u64 = 0,
+
+    /// The max number of cycles to execute.
     max_cycles: u64 = std.math.maxInt(u64),
 
     // inline vtable
@@ -265,13 +337,16 @@ pub const Z80State = packed struct {
     ioWriteFn: IOWriteFnPtr,
     intAck: InterruptAck,
 
-    // Interrupt Enable Flip-Flops
+    // !!!
     // NOTE: bool fields, MUST stay after the function pointers, see: https://github.com/ziglang/zig/issues/20539
+    // !!!
 
-    IFF1: bool = false, // Disables interrupts from being accepted
-    IFF2: bool = false, // Temporary storage location for IFF1
+    // Interrupt Enable Flip-Flops IFF1 and IFF2
+    /// Disables interrupts from being accepted
+    IFF1: bool = false,
+    /// Temporary storage location for IFF1
+    IFF2: bool = false,
 
-    // signals
     requests: Z80Requests = .{},
 
     // lines

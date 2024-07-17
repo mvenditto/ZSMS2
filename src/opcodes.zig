@@ -1,3 +1,6 @@
+//! This module contains the implementation of the Z80 instruction set.
+// NOTE: for readability reasons functions implementing instructions DO NOT follow Zig's naming conventions.
+
 const std = @import("std");
 const processor = @import("cpu.zig");
 const byte = @import("byte.zig");
@@ -7,18 +10,24 @@ const LineHigh = processor.LineHigh;
 const RegisterPairs = processor.RegisterPairs1;
 const SixteenBitRegister = processor.SixteenBitRegister;
 
-// Z80 instructions are represented in memory as byte sequences of the form (items in brackets are optional):
-// [prefix byte,]  opcode  [,displacement byte]  [,immediate data]
-// - OR -
-// two prefix bytes,  displacement byte,  opcode
-//
-// 7 6 5 4 3 2 1 0
-// x x y y y z z z
-// ─┬─ ──┬── ──┬──
-//  │    │     └───── zzz
-//  │    └─────────── yyy = ppq
-//  └────────────────  xx
-//
+/// Z80 instructions are represented in memory as byte sequences of the form (items in brackets are optional):
+///
+/// [prefix] *opcode* [displacement-byte]  [immediate-data]
+///
+/// OR
+///
+/// [prefix] [prefix] [displacement-byte], *opcode*
+///
+/// For an esier access to "parametrized" parts (bits) of an opcode we'll reference to this format:
+///
+///```
+/// 7 6 5 4 3 2 1 0
+/// x x y y y z z z
+/// ─┬─ ──┬── ──┬──
+///  │    │     └───── zzz
+///  │    └─────────── yyy = ppq
+///  └────────────────  xx
+///```
 pub const OpCode = packed struct {
     z: u3, // 0-1-2
     y: u3, // 3-4-5
@@ -50,46 +59,74 @@ const CF = 1;
 
 const InstructionFn = *const fn (*Z80State, *const OpCode) u8;
 
+/// Defines how to retrieve data.
 const AddressingMode = enum {
-    register, // r
-    indirect, // (HL)
-    indexed, // (IX+d) or (IY+d)
-    immediate, // n
-    extended, // (nn)
+    /// Fetch the contents of a register.
+    ///
+    /// Mnemonic: `r`
+    register,
+    /// Fetch the value at the memory location pointed by the 16-bit address stored in `HL`.
+    ///
+    /// Mnemonic: `(HL)`
+    indirect,
+    /// Fetch the value at the memory location pointed by `IX` or `IY`
+    /// + a displacement byte `d`.Where `d` is part of the instruction sequence.
+    ///
+    /// Mnemonic: `(IX+d)` or `(IY+d)`
+    indexed,
+    /// Fetch byte `n` immediately after the opcode byte.
+    ///
+    /// Mnemonic: `n`
+    immediate,
+    /// Fetch the value at at addresss `nn` where `nn` is a 2-byte value stored after the opcode byte.
+    ///
+    /// Mnemonic: `(nn)`
+    extended,
 };
 
 const BitwiseOp = enum { AND, XOR, OR };
 
 /// see: https://web.archive.org/web/20170121033813/http://www.cs.umd.edu:80/class/spring2003/cmsc311/Notes/Comb/overflow.html
+/// NOTE: `result` is the sum of `lhs` and `rhs`, `rhs` must be passed negated `~rhs` to this function.
 inline fn overflow(comptime T: type, result: T, lhs: T, rhs: T) T {
     return (@as(T, (lhs ^ rhs) & (lhs ^ result)) >> (@bitSizeOf(T) - 3)) & PVF;
 }
 
-/// see: Hacker's delight Chapter 5-2 "Parity", for an in-depth explanation
-/// 0 = even, 1 = odd
+/// Calculates the bits parity of the input value.
+/// * 0 = even
+/// * 1 = odd.
+///
+/// SEE: Hacker's delight Chapter 5-2 "Parity", for an in-depth explanation.
 inline fn parity(x: u8) u1 {
     const p = @as(u16, 0x6996) >> @intCast((x ^ (x >> 4)) & 0xF);
     return @truncate(p & 1);
 }
 
+/// Returns `true` if `x` has an *even* parity.
 fn hasEvenParity8(x: u8) bool {
     return parity(x) == 0; // 0 = even
 }
 
+/// Same as `parity` but with inverted logics:
+/// * 1 = even
+/// * 0 = odd
 fn z80Parity(x: u8) u1 {
-    return parity(x) ^ 1; // 1 == even, 0 == odd
+    return parity(x) ^ 1;
 }
 
+/// Reads the value of 8-bit register `r`.
 pub inline fn readRegister(state: *Z80State, r: u8) u8 {
     const value = state.gp_registers[r];
     return value;
 }
 
+/// Reads a byte `n` of immediate data.
 pub inline fn readImmediate(state: *Z80State, comptime offset: u8) u8 {
     const value = state.memRead(state.PC +% offset);
     return value;
 }
 
+/// Reads a byte from memory location `nn` where `nn` is a 16-bit value from immediate data.
 pub inline fn readExtended(state: *Z80State, comptime offset: u8) u8 {
     const low = state.memRead(state.PC + offset);
     const high = state.memRead(state.PC + offset + 1);
@@ -98,12 +135,14 @@ pub inline fn readExtended(state: *Z80State, comptime offset: u8) u8 {
     return value;
 }
 
+/// Reads 2 bytes of immediate data.
 pub inline fn readImmediateExtended(state: *const Z80State, comptime offset: u8) .{ u8, u8 } {
     const low = state.memRead(state.PC +% offset);
     const high = state.memRead(state.PC +% offset +% 1);
     return .{ low, high };
 }
 
+/// Same as `readImmediateExtended` but also updates the MEMPTR.
 pub inline fn readExtendedUpdateWZ(state: *Z80State, comptime offset: u8) u8 {
     const low = state.memRead(state.PC + offset);
     const high = state.memRead(state.PC + offset + 1);
@@ -113,12 +152,16 @@ pub inline fn readExtendedUpdateWZ(state: *Z80State, comptime offset: u8) u8 {
     return value;
 }
 
+/// Reads a byte from `memory[address]` where `address` is the value stored in 16-bit register `rp`.
 pub inline fn readIndirect(state: *Z80State, rp: u8) u8 {
     const address = state.gp_registers_pairs[rp].getValue();
     const value = state.memRead(address);
     return value;
 }
 
+/// Reads a byte from memory at address`XY + d` where:
+/// * `XY` is either `IX` or `IY`, based on the instruction prefix
+/// * `d` is a (signed) displacement byte from immediate data
 pub fn readIndexed(state: *Z80State, comptime offset: u8) u8 {
     const base_address: i32 = @intCast(state.addr_register.getValue());
     const d: i8 = @bitCast(state.memRead(state.PC + offset)); // displacement is two's complement
@@ -128,15 +171,18 @@ pub fn readIndexed(state: *Z80State, comptime offset: u8) u8 {
     return value;
 }
 
+/// `r` <- `value`.
 pub inline fn storeRegister(state: *Z80State, r: u8, value: u8) void {
     state.gp_registers[r] = value;
 }
 
+/// `memory[(rp)]` <- value.
 pub inline fn storeIndirect(state: *Z80State, value: u8, rp: u8) void {
     const address = state.gp_registers_pairs[rp].getValue();
     state.memWrite(address, value);
 }
 
+/// `memory[(XY + d)]` <- value.
 pub inline fn storeIndexed(state: *Z80State, value: u8, comptime offset: u8) void {
     const base_address: i32 = @intCast(state.addr_register.getValue());
     const d: i8 = @bitCast(state.memRead(state.PC + offset)); // displacement is two's complement
@@ -144,6 +190,7 @@ pub inline fn storeIndexed(state: *Z80State, value: u8, comptime offset: u8) voi
     state.memWrite(address, value);
 }
 
+/// Same as `storeIndexed` but also updates the MEMPTR.
 pub inline fn storeIndexedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
     const base_address: i32 = @intCast(state.addr_register.getValue());
     const d: i8 = @bitCast(state.memRead(state.PC + offset)); // displacement is two's complement
@@ -152,6 +199,7 @@ pub inline fn storeIndexedUpdateWZ(state: *Z80State, value: u8, comptime offset:
     state.WZ.setValue(address);
 }
 
+/// `memory[(nn)]` <- value.
 pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) void {
     const low = state.memRead(state.PC + offset);
     const high = state.memRead(state.PC + offset + 1);
@@ -159,6 +207,7 @@ pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) vo
     state.memWrite(address, value);
 }
 
+/// Same as `storeExtended` but also updates the MEMPTR.
 pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
     const low = state.memRead(state.PC + offset);
     const high = state.memRead(state.PC + offset + 1);
@@ -168,6 +217,7 @@ pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset
     state.WZ.high = state.AF.A;
 }
 
+/// Loads two bytes of immediate data to the specified register pair.
 pub inline fn loadImmediateExtended(state: *const Z80State, dst: *SixteenBitRegister, comptime offset: u8) void {
     dst.low = state.memRead(state.PC +% offset);
     dst.high = state.memRead(state.PC +% offset +% 1);
@@ -203,6 +253,7 @@ pub fn xy_illegal(s: *Z80State, _: *const OpCode) u8 {
     const next: OpCode = @bitCast(next_opcode);
     return instructions_table[next_opcode](s, &next) + 4; // 4 t-states for the prefix
 }
+
 pub inline fn add_a_x(s: *Z80State, rhs: u8) void {
     const t = s.AF.A +% rhs; // +% = wrapping addition
     s.AF.F.N = false;

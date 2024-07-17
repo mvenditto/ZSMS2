@@ -1,13 +1,16 @@
 const std = @import("std");
 
+/// Extracts the low nibble of the input byte.
 pub inline fn getLowNibble(b: u8) u4 {
     return @intCast(b & 0x0F);
 }
 
+/// Extracts the high nibble of the input byte.
 pub inline fn getHighNibble(b: u8) u4 {
     return @intCast((b >> 4) & 0x0F);
 }
 
+/// Combines two 4-bit unsigned integers to form a byte.
 pub inline fn nibblesToByte(low: u4, high: u4) u8 {
     return low | (@as(u8, high) << 4);
 }
