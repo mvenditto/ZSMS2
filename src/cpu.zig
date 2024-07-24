@@ -483,7 +483,7 @@ pub const Z80State = packed struct {
     }
 
     pub fn resetSignals(self: *Self) void {
-        self.requests = @bitCast(0);
+        self.requests = @bitCast(@as(u3, 0));
     }
 
     pub inline fn updateQ(self: *Self) void {
