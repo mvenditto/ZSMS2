@@ -5,9 +5,9 @@ const assert = std.debug.assert;
 const host_endianess = @import("builtin").target.cpu.arch.endian();
 
 const build_opts = @import("build_options");
+
 /// If true simulates Q, otherwise do not. Affects how SCF/CCF flags are calculated.
 pub const z80_sim_q = build_opts.z80_sim_q;
-pub const z80_bypass_halt = build_opts.z80_bypass_halt;
 
 /// Represents a 16-bit register.
 pub const SixteenBitRegister = packed struct {
