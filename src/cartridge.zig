@@ -279,3 +279,32 @@ pub fn loadRomAbsolute(absolute_path: []const u8) ROMLoadError!ROM {
         .sdsc_header = sdsc_header,
     };
 }
+
+pub fn printRomInfo(rom: *const ROM) void {
+    if (rom.sega_header) |h| {
+        const tmr_sega: []const u8 = h.raw_header[0..8];
+
+        const rom_size_kb = getRomSizeKB(h.rom_size);
+        const product_name = tryGetCartridgeName(h.product_code);
+
+        std.debug.print("\nCartridge:\n", .{});
+        std.debug.print("    Size: {d} bytes - {d}KB (0x{x})\n", .{ rom.size, rom_size_kb, h.rom_size });
+        std.debug.print("    SegaHeader: {s}\n", .{tmr_sega});
+        std.debug.print("    Checksum: rom=0x{x} calc=0x{x}\n", .{ h.checksum, h.checksum_calc });
+        std.debug.print("    Product Code: {d} ({s})\n", .{ h.product_code, product_name });
+        std.debug.print("    System/Region: {any}\n", .{h.system_region});
+        std.debug.print("    Version: {d}\n", .{h.version});
+    }
+
+    if (rom.sdsc_header) |sdsc| {
+        std.debug.print("    SDSC Version: {d}.{d}\n", .{ sdsc.version.major, sdsc.version.minor });
+        std.debug.print("    Author: '{s}'\n", .{sdsc.author_name});
+        std.debug.print("    Title: '{s}'\n", .{sdsc.program_name});
+        std.debug.print("    Description: '{s}'\n", .{sdsc.description});
+        std.debug.print("    Release Date: {d}/{d}/{d}\n", .{
+            sdsc.release_date.day,
+            sdsc.release_date.month,
+            sdsc.release_date.year,
+        });
+    }
+}
