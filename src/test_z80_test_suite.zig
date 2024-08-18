@@ -14,7 +14,7 @@ const TestFormat = enum {
     /// DOS COM file
     com,
     /// Spectrum tape format
-    tap,
+    tap_rak,
     /// Tap but needs the ZX spectrum rom
     tap_woody,
 };
@@ -88,6 +88,9 @@ const TestRom = struct {
     platform: TestPlatform,
     /// The test format
     format: TestFormat,
+    /// Offset to add to the start address
+    /// Used in Woodmass Z80 test suite to skip user input.
+    start_offset: u8 = 0,
 };
 
 const test_suite = [_]TestRom{
@@ -95,18 +98,13 @@ const test_suite = [_]TestRom{
     TestRom{ .title = "Z80 instruction exerciser (doc) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexdoc.com", .platform = .cpm, .format = .com },
     TestRom{ .title = "Z80 instruction exerciser (all) (yaze-1.14)", .author = "Frank D. Cringle (2004)", .file_path = "zexall.com", .platform = .cpm, .format = .com },
     TestRom{ .title = "Diagnostics II V1.2 CPU Test (Supersoft)", .author = "Supersoft Associates (1981)", .file_path = "CPUTEST.COM", .platform = .cpm, .format = .com }, // https://gitlab.com/retroabandon/cpm-re/-/tree/main/ss-cpudiag
-    TestRom{
-        .title = "Z80 Test suite",
-        .author = "Mark Woodmass (2008)",
-        .file_path = "Z80_Test_Suite_2008_woodmass.tap",
-        .platform = .spectrum,
-        .format = .tap_woody,
-    },
-    TestRom{ .title = "Zilog Z80 CPU Test Suite (doc) (1.2a)", .author = "Patrik Rak", .file_path = "z80doc.tap", .platform = .spectrum, .format = .tap },
-    TestRom{ .title = "Zilog Z80 CPU Test Suite (all) (1.2a)", .author = "Patrik Rak", .file_path = "z80full.tap", .platform = .spectrum, .format = .tap },
-    TestRom{ .title = "Zilog Z80 CPU Test Suite (memptr) (1.2a)", .author = "Patrik Rak", .file_path = "z80memptr.tap", .platform = .spectrum, .format = .tap },
-    TestRom{ .title = "Zilog Z80 CPU Test Suite (ccf) (1.2a)", .author = "Patrik Rak", .file_path = "z80ccf.tap", .platform = .spectrum, .format = .tap },
-    TestRom{ .title = "Zilog Z80 CPU Test Suite (ccfscr) (1.2a)", .author = "Patrik Rak", .file_path = "z80ccfscr.tap", .platform = .spectrum, .format = .tap },
+    TestRom{ .title = "Z80 Test suite (flags)", .author = "Mark Woodmass (2008)", .file_path = "Z80_Test_Suite_2008_woodmass.tap", .platform = .spectrum, .format = .tap_woody, .start_offset = 87 },
+    TestRom{ .title = "Z80 Test suite (memptr)", .author = "Mark Woodmass (2008)", .file_path = "Z80_Test_Suite_2008_woodmass.tap", .platform = .spectrum, .format = .tap_woody, .start_offset = 87 + 8 }, // +8 = ( 2x 3-byte LDs + JP)
+    TestRom{ .title = "Zilog Z80 CPU Test Suite (doc) (1.2a)", .author = "Patrik Rak", .file_path = "z80doc.tap", .platform = .spectrum, .format = .tap_rak },
+    TestRom{ .title = "Zilog Z80 CPU Test Suite (all) (1.2a)", .author = "Patrik Rak", .file_path = "z80full.tap", .platform = .spectrum, .format = .tap_rak },
+    TestRom{ .title = "Zilog Z80 CPU Test Suite (memptr) (1.2a)", .author = "Patrik Rak", .file_path = "z80memptr.tap", .platform = .spectrum, .format = .tap_rak },
+    TestRom{ .title = "Zilog Z80 CPU Test Suite (ccf) (1.2a)", .author = "Patrik Rak", .file_path = "z80ccf.tap", .platform = .spectrum, .format = .tap_rak },
+    TestRom{ .title = "Zilog Z80 CPU Test Suite (ccfscr) (1.2a)", .author = "Patrik Rak", .file_path = "z80ccfscr.tap", .platform = .spectrum, .format = .tap_rak },
 };
 
 // see: http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch5.htm
@@ -205,9 +203,9 @@ fn zxSpectrum(r: *cpu.Z80State, s: *Screen) !void {
             1 => {
                 s.tab_expansion |= @as(u16, char) << 8;
                 s.tab_expansion %= 32;
-                s.tab_expansion = s.tab_expansion - s.spectrum_x;
-                s.spectrum_tab -= 1;
-                while (s.tab_expansion > 0) : (s.tab_expansion -= 1) {
+                s.tab_expansion = s.tab_expansion -% s.spectrum_x;
+                s.spectrum_tab -%= 1;
+                while (s.tab_expansion > 0) : (s.tab_expansion -%= 1) {
                     try writer.writeByte(' ');
                 }
             },
@@ -243,21 +241,6 @@ fn tryReadByte(stdin: *const std.fs.File) u8 {
     return stdin.reader().readByte() catch {
         return 0;
     };
-}
-
-fn spectrumLastKeyUpdater(io: *TestIO, s: *cpu.Z80State) void {
-    const stdin = std.io.getStdIn();
-    defer stdin.close();
-
-    while (true) {
-        std.time.sleep(20 * std.time.ms_per_s);
-        const k = tryReadByte(&stdin);
-
-        if (k != 0) {
-            std.debug.print("PC={d}\n", .{s.PC});
-            io.memory[23560] = k; // 23560: LAST-K - Last key pressed;
-        }
-    }
 }
 
 fn runTest(test_rom: TestRom) !void {
@@ -310,7 +293,7 @@ fn runTest(test_rom: TestRom) !void {
             code_addr = 0x0000;
             code_size = @truncate(rom.len); // a .COM file it's a flat binary
         },
-        .tap, .tap_woody => {
+        .tap_rak, .tap_woody => {
             const tap = try tape.parseTapFile(allocator, rom);
             var offset: u16 = 0;
             std.debug.print("Loading TAP file...\n", .{});
@@ -350,47 +333,36 @@ fn runTest(test_rom: TestRom) !void {
 
             std.debug.assert(code_size > 0);
 
-            io.memory[0x7000] = 0xcd; // call nn
-            io.memory[0x7001] = @truncate(start_addr & 0xFF); // low
-            io.memory[0x7002] = @truncate((start_addr >> 8) & 0xFF); // high
-            io.memory[0x7003] = 0x76; // halt
-            s.PC = 0x7000;
-            io.ports[0xFE] = 0xBF; // needed by some tests
-
-            if (test_rom.format == .tap_woody) {
+            if (test_rom.format == .tap_rak) {
+                io.memory[0x7000] = 0xcd; // call nn
+                io.memory[0x7001] = @truncate(start_addr & 0xFF); // low
+                io.memory[0x7002] = @truncate((start_addr >> 8) & 0xFF); // high
+                io.memory[0x7003] = 0x76; // halt
+                s.PC = 0x7000;
+            } else if (test_rom.format == .tap_woody) {
                 const full_path2 = try std.fs.path.join(allocator, &[_][]const u8{ base_path, "zx_firmware.rom" });
                 defer allocator.free(full_path2);
 
                 std.debug.print("Loading ZX Firmware rom: {s}\n", .{full_path2});
 
-                const firmware_file = try std.fs.openFileAbsolute(
-                    full_path2,
-                    .{
-                        .mode = std.fs.File.OpenMode.read_only,
-                    },
-                );
+                const firmware_file = try std.fs.openFileAbsolute(full_path2, .{
+                    .mode = std.fs.File.OpenMode.read_only,
+                });
                 defer firmware_file.close();
                 const zx_firmware = try firmware_file.reader().readAllAlloc(allocator, 16 * 1024);
+
                 std.debug.assert(zx_firmware.len == 16384);
                 std.mem.copyForwards(u8, &io.memory, zx_firmware);
-
-                // start_addr = 0x8057;
                 s.SP.setValue(0x7FE8);
-                s.AF.setValue(0x3222);
             }
         },
     }
-    std.debug.print("start_address=0x{x},code_size={d},code_addr={d}\n", .{
-        start_addr,
-        code_size,
-        code_addr,
-    });
 
-    const program = rom[code_addr..code_size];
+    const program = rom[code_addr..rom.len];
 
     std.debug.print("Program len: {d}\n", .{program.len});
 
-    s.PC = start_addr;
+    s.PC = start_addr + test_rom.start_offset;
 
     for (program, start_addr..) |opcode, i| {
         io.memory[i] = opcode;
@@ -400,16 +372,12 @@ fn runTest(test_rom: TestRom) !void {
         .spectrum => {
             s.I = 0x3f;
             s.IM = 1;
-            const thread = try std.Thread.spawn(.{}, spectrumLastKeyUpdater, .{ &io, s });
-            _ = thread;
         },
         else => {},
     }
 
     while (true) {
-        const opcode = opcodes.fetchOpcode(s);
-
-        opcodes.exec(s, opcode);
+        opcodes.execOne(s);
 
         switch (test_rom.platform) {
             .cpm => switch (s.PC) {
@@ -421,7 +389,6 @@ fn runTest(test_rom: TestRom) !void {
                 0x0D6B => _ = opcodes.ret(s, &@bitCast(@as(u8, 0))), // CLS
                 0x1601 => _ = opcodes.ret(s, &@bitCast(@as(u8, 0))), // CHAN_OPEN
                 0x0010 => _ = try zxSpectrum(s, screen), // PRINT A CHARACTER' RESTART
-                // 4761
                 else => {},
             },
         }
@@ -436,27 +403,26 @@ pub fn main() !void {
     var args = try std.process.argsWithAllocator(allocator);
     _ = args.skip(); // zig
 
-    const arg = args.next();
+    const cmd = args.next() orelse "list";
 
-    if (arg) |cmd| {
-        if (std.mem.eql(u8, "list", cmd)) {
-            std.debug.print("[ID]  Description\n", .{});
-            std.debug.print("------------------\n", .{});
-            for (test_suite, 0..) |test_, i| {
-                std.debug.print("[{d}] - {s}\n", .{ i, test_.title });
-            }
-            std.debug.print("\nTo run:  zig build run-z80-test-suite -- run [ID]\n\n", .{});
-        } else if (std.mem.eql(u8, "run", cmd)) {
-            if (args.next()) |test_idx_str| {
-                const test_idx = try std.fmt.parseInt(usize, test_idx_str, 10);
-                if (test_idx >= test_suite.len) {
-                    std.debug.print("Unknown test {d}, exit\n", .{test_idx});
-                    return;
-                }
-                try runTest(test_suite[test_idx]);
-            }
-        } else {
-            std.debug.print("Unknown cmd: {s}\n", .{cmd});
+    if (std.mem.eql(u8, "list", cmd)) {
+        std.debug.print("[ID]  Description\n", .{});
+        std.debug.print("-----------------------------------------------\n", .{});
+        for (test_suite, 0..) |test_, i| {
+            std.debug.print("[{d}] - {s}\n", .{ i, test_.title });
         }
+        std.debug.print("\nTo run:  zig build run-z80-test-suite -- run [ID]\n\n", .{});
+        std.debug.print("NOTE: Some tests does not auto-terminate because the ZX Spectrum emulation is the bare minimum to print an output.\n      Manually terminate them with CTRL + C when finished.\n\n", .{});
+    } else if (std.mem.eql(u8, "run", cmd)) {
+        if (args.next()) |test_idx_str| {
+            const test_idx = try std.fmt.parseInt(usize, test_idx_str, 10);
+            if (test_idx >= test_suite.len) {
+                std.debug.print("Unknown test {d}, exit\n", .{test_idx});
+                return;
+            }
+            try runTest(test_suite[test_idx]);
+        }
+    } else {
+        std.debug.print("Unknown cmd: {s}\n", .{cmd});
     }
 }
