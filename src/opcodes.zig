@@ -164,8 +164,8 @@ pub inline fn readIndirect(state: *Z80State, rp: u8) u8 {
 /// * `d` is a (signed) displacement byte from immediate data
 pub fn readIndexed(state: *Z80State, comptime offset: u8) u8 {
     const base_address: i32 = @intCast(state.addr_register.getValue());
-    const d: i8 = @bitCast(state.memRead(state.PC + offset)); // displacement is two's complement
-    const address: u16 = @intCast(@mod(base_address + d, 65536));
+    const d: i8 = @bitCast(state.memRead(state.PC +% offset)); // displacement is two's complement
+    const address: u16 = @intCast(@mod(base_address +% d, 65536));
     const value = state.memRead(address);
     state.WZ.setValue(address);
     return value;
@@ -201,16 +201,16 @@ pub inline fn storeIndexedUpdateWZ(state: *Z80State, value: u8, comptime offset:
 
 /// `memory[(nn)]` <- value.
 pub inline fn storeExtended(state: *Z80State, value: u8, comptime offset: u8) void {
-    const low = state.memRead(state.PC + offset);
-    const high = state.memRead(state.PC + offset + 1);
+    const low = state.memRead(state.PC +% offset);
+    const high = state.memRead(state.PC +% offset +% 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
     state.memWrite(address, value);
 }
 
 /// Same as `storeExtended` but also updates the MEMPTR.
 pub inline fn storeExtendedUpdateWZ(state: *Z80State, value: u8, comptime offset: u8) void {
-    const low = state.memRead(state.PC + offset);
-    const high = state.memRead(state.PC + offset + 1);
+    const low = state.memRead(state.PC +% offset);
+    const high = state.memRead(state.PC +% offset +% 1);
     const address: u16 = @intCast(low | @as(u16, high) << 8);
     state.memWrite(address, value);
     state.WZ.low = @truncate((address +% 1) & 0xFF);
@@ -363,7 +363,7 @@ pub fn cp_a_x(s: *Z80State, rhs: u8) void {
 
 pub fn inc_dec_x(s: *Z80State, opcode: *const OpCode, value: u8) u8 {
     const dec: u8 = opcode.z & 1; // (0) inc, (1) dec
-    const nf: u8 = dec << 1; // 2 if dec, 1 if inc
+    const nf: u8 = dec << 1; // 2 if dec, 0 if inc
     const t = value +% 1 -% nf;
     s.AF.F.N = dec == 1;
     s.AF.F.Z = t == 0;
@@ -568,7 +568,7 @@ pub inline fn sbc_hl_ss(state: *Z80State, src: *SixteenBitRegister) void {
 // q (0) = inc, (1) dec
 pub inline fn inc_dec_ss(s: *Z80State, opcode: *const OpCode, ss: *SixteenBitRegister) void {
     const dec: u8 = opcode.y & 1; // (0) inc, (1) dec
-    const nf: u8 = dec << 1; // 2 if dec, 1 if inc
+    const nf: u8 = dec << 1; // 2 if dec, 0 if inc
     const lhs = ss.getValue();
     const t = lhs +% 1 -% nf;
     s.resetQ();
@@ -760,8 +760,8 @@ pub fn consumeXYSequence(state: *Z80State) u8 {
     // decrement PC so that the full opcode 0x(dd|fd)hh is executed next
     state.PC -%= 1;
 
-    std.debug.assert(state.memRead(state.PC) & 0xdd == 0xdd);
-    std.debug.assert(state.memRead(state.PC +% 1) & 0xdd != 0xdd);
+    // std.debug.assert(state.memRead(state.PC) & 0xdd == 0xdd);
+    // std.debug.assert(state.memRead(state.PC +% 1) & 0xdd != 0xdd);
 
     // The last seen DD or FD prefix is the one that matters.
     return prefix;
@@ -2411,33 +2411,42 @@ pub fn reti(state: *Z80State, _: *const OpCode) u8 {
 }
 
 pub fn halt(state: *Z80State, _: *const OpCode) u8 {
-    state.halt_line = LineHigh;
-
-    state.PC +%= 1;
-
-    if (processor.z80_bypass_halt) {
-        var remaining_cycles = state.max_cycles - state.cycles;
-        // remainder from remaining_cycles / 4 (where 4=nop T-states).
-        const misalignment4 = remaining_cycles & 3;
-        // & 3 ensures it is an amount in range 0-3
-        const adjustment = (4 - misalignment4) & 3;
-        // align to a multiple of 4
-        remaining_cycles += adjustment;
-        state.cycles += remaining_cycles;
-        const r = @as(u64, state.R.refresh_counter) +% remaining_cycles / 4;
-        state.R.refresh_counter = @truncate(r);
-        return 0;
+    if (state.halt_line == LineHigh) {
+        state.halt_line = LineLow;
     }
 
-    while (true) {
-        state.R.increment();
-        state.cycles +%= 4;
-        state.resetQ(); // internal NOPs do not affect flags
-        const requests: u3 = @bitCast(state.requests);
-        if (requests > 0) break;
+    // if (processor.z80_bypass_halt) {
+    //     var remaining_cycles = state.max_cycles - state.cycles;
+    //     // remainder from remaining_cycles / 4 (where 4=nop T-states).
+    //     const misalignment4 = remaining_cycles & 3;
+    //     // & 3 ensures it is an amount in range 0-3
+    //     const adjustment = (4 - misalignment4) & 3;
+    //     // align to a multiple of 4
+    //     remaining_cycles += adjustment;
+    //     state.cycles += remaining_cycles;
+    //     const r = @as(u64, state.R.refresh_counter) +% remaining_cycles / 4;
+    //     state.R.refresh_counter = @truncate(r);
+    //     return 0;
+    // }
+
+    // while (true) {
+    //     state.R.increment();
+    //     state.cycles +%= 4;
+    //     state.resetQ(); // internal NOPs do not affect flags
+    //     const requests: u3 = @bitCast(state.requests);
+    //     if (requests > 0) break;
+    // }
+
+    state.R.increment();
+    state.resetQ();
+
+    const requests: u3 = @bitCast(state.requests);
+
+    if (requests > 0) {
+        state.PC +%= 1;
     }
 
-    return 0;
+    return 4;
 }
 
 // zig fmt: off
@@ -2560,96 +2569,84 @@ pub fn exec(state: *Z80State, opcode: u8) void {
     state.cycles +%= insn_cycles;
 }
 
-pub fn execLoop(state: *Z80State) void {
-    while(true)
-    {
-        const requests: u3 = @bitCast(state.requests);
-        
-        if (requests > 0) {
-            if (state.requests.nmi_signal){ // non-maskable interrupts (NMI)
-                state.iff1 = false;
-                if (state.halt_line == LineLow) state.halt_line = LineHigh;
-                state.R.increment();
-                // push PC onto the stack at SP
-                var sp = state.SP.getValue();
-                sp -%= 1;
-                state.memWrite(sp, (state.PC >> 8) & 0xFF);
-                sp -%= 1;
-                state.memWrite(sp, state.PC & 0xFF);
-                state.SP.setValue(sp);
-                // set PC (and MEMPTR) to the interrupt handler at 0x66
-                state.PC = 0x66;
-                state.WZ.low = 0x66;
-                state.WZ.high = 0;
-                state.cycles +%= 11;
-                continue;
-            }
-            else if (state.requests.int_signal) { // maskable interrupts (INT)
-                if (state.halt_line == LineLow) state.halt_line = LineHigh;
-                var sp = state.SP.getValue();
-                sp -%= 1;
-                state.memWrite(sp, (state.PC >> 8) & 0xFF);
-                sp -%= 1;
-                state.memWrite(sp, state.PC & 0xFF);
-                state.SP.setValue(sp);
-                // set PC (and MEMPTR) to the interrupt handler at 0x38
-                state.PC = 0x38;
-                state.WZ.low = 0x38;
-                state.WZ.high = 0;
-                state.cycles +%= 13;
-                continue;
-            }
-        }
+pub fn execOne(s: *Z80State) void {
+    const requests: u3 = @bitCast(s.requests);
+    if (requests > 0) {
+        if (s.requests.nmi_signal) { // non-maskable interrupts (NMI)
+            s.IFF1 = false;
+            if (s.halt_line == processor.LineLow) s.halt_line = processor.LineHigh;
+            s.R.increment();
+            // push PC onto the stack at SP
+            var sp = s.SP.getValue();
+            sp -%= 1;
+            s.memWrite(sp, @truncate((s.PC >> 8) & 0xFF));
+            sp -%= 1;
+            s.memWrite(sp, @truncate(s.PC & 0xFF));
+            s.SP.setValue(sp);
+            // set PC (and MEMPTR) to the interrupt handler at 0x66
+            s.PC = 0x66;
+            s.WZ.low = 0x66;
+            s.WZ.high = 0;
+            s.cycles +%= 11;
+            return;
+        } else if (s.requests.int_signal and (s.IFF1 and s.IFF2)) { // maskable interrupts (INT)
+            s.resetSignals();
+            s.IFF1 = false;
+            s.IFF2 = false;
 
-        const opcode = fetchOpcode(state);
-        const decoded: *const OpCode = @ptrCast(&opcode);
-        const insn_func = instructions_table[opcode];
-        const insn_cycles = insn_func(state, decoded);
-        state.cycles +%= insn_cycles;
+            if (s.halt_line == processor.LineLow) s.halt_line = processor.LineHigh;
+            // interrupt response data
+            const ird: u8 = 0xff;
+            s.R.increment();
+
+            switch (s.IM) {
+                0 => {},
+                1 => {
+                    var sp = s.SP.getValue();
+                    sp -%= 1;
+                    s.memWrite(sp, @truncate((s.PC >> 8) & 0xFF));
+                    sp -%= 1;
+                    s.memWrite(sp, @truncate(s.PC & 0xFF));
+                    s.SP.setValue(sp);
+                    // set PC (and MEMPTR) to the interrupt handler at 0x38
+                    s.PC = 0x38;
+                    s.WZ.low = 0x38;
+                    s.WZ.high = 0;
+                    s.resetQ();
+                    s.cycles +%= 13;
+                },
+                2 => {
+                    var sp = s.SP.getValue();
+                    sp -%= 1;
+                    s.memWrite(sp, @truncate((s.PC >> 8) & 0xFF));
+                    sp -%= 1;
+                    s.memWrite(sp, @truncate(s.PC & 0xFF));
+                    s.SP.setValue(sp);
+                    // Set PC and MEMPTR to the Interrupt Handler.
+                    // IR = ird | I << 8;
+                    s.WZ.low = ird;
+                    s.WZ.high = s.I;
+                    s.PC = s.WZ.getValue();
+                    s.resetQ();
+                    s.cycles +%= 19;
+                },
+                else => {},
+            }
+
+            return;
+        }
     }
+
+    const opcode = fetchOpcode(s);
+    const decoded: *const OpCode = @ptrCast(&opcode);
+    const insn_func = instructions_table[opcode];
+    const insn_cycles = insn_func(s, decoded);
+    s.cycles +%= insn_cycles;
 }
 
-pub const OpExecError = error {OpNotImplemented,OpIllegal};
-
-pub fn testExec(state: *Z80State, opcode: u8) OpExecError!void {
-    const decoded: *const OpCode = @ptrCast(&opcode);
-    
-    var table = &instructions_table;
-    var next = state.memRead(state.PC +% 1);
-
-    switch (opcode) {
-        0xdd => {
-            if (next == 0xcb){
-                table = &xy_cb_instructions_table;
-            }
-            else {
-                table = &xy_instructions_table;
-            }
-        },
-        0xfd => {
-            if (next == 0xcb){
-                table = &xy_cb_instructions_table;
-            }
-            else {
-                table = &xy_instructions_table;
-            }
-        },
-        0xcb => table = &cb_instructions_table,
-        0xed => table = &ed_instructions_table,
-        else => {
-            next = opcode;
-        }
-    }
-
-    const func: ?InstructionFn = table[next];
-
-    if (func)
+pub fn execLoop(s: *Z80State) void {
+    while(true)
     {
-        const insn_func = instructions_table[opcode];
-        const insn_cycles = insn_func(state, decoded);
-        state.cycles +%= insn_cycles;
-    }
-    else {
-        return OpExecError.OpNotImplemented;
+        execOne(s);
     }
 }
