@@ -15,20 +15,6 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // const lib = b.addStaticLibrary(.{
-    //     .name = "zig80",
-    //     // In this case the main source file is merely a path, however, in more
-    //     // complicated build scripts, this could be a generated file.
-    //     .root_source_file = b.path("src/root.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-
-    // This declares intent for the library to be installed into the standard
-    // location when the user invokes the "install" step (the default step when
-    // running `zig build`).
-    // b.installArtifact(lib);
-
     const build_options = b.addOptions();
 
     build_options.addOption(bool, "z80_sim_q", b.option(
@@ -36,12 +22,6 @@ pub fn build(b: *std.Build) void {
         "Z80_SIM_Q",
         "if true, simulate the Z80's Q undocumented behavior.",
     ) orelse true);
-
-    build_options.addOption(bool, "z80_bypass_halt", b.option(
-        bool,
-        "Z80_BYPASS_HALT",
-        "if true, the HALT will not be blocking (the state is kept consistent).",
-    ) orelse false);
 
     const build_options_mod = build_options.createModule();
 
@@ -51,10 +31,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-
-    // b.modules.put("build_options", build_options_mod) catch {
-    //     std.debug.panic("Failed to add build_options module!", .{});
-    // };
 
     const waf = b.addWriteFiles();
     waf.addCopyFileToSource(exe.getEmittedAsm(), "./zig-out/main.asm");
@@ -77,10 +53,27 @@ pub fn build(b: *std.Build) void {
     });
     exe3.root_module.addImport("build_options", build_options_mod);
 
+    const exe4 = b.addExecutable(.{
+        .name = "vdp_test",
+        .root_source_file = b.path("src/vdp_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe4.root_module.addImport("build_options", build_options_mod);
+
+    const sdl_dep = b.lazyDependency("sdl", .{
+        .optimize = .ReleaseFast,
+        .target = target,
+    });
+
+    if (sdl_dep) |sdl| {
+        exe4.linkLibrary(sdl.artifact("SDL2"));
+    }
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
-    b.installArtifact(exe);
+    b.installArtifact(exe4);
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
@@ -88,6 +81,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     const run_single_step_tests_cmd = b.addRunArtifact(exe2);
     const run_z80_test_suite_cmd = b.addRunArtifact(exe3);
+    const run_vdp_test_cmd = b.addRunArtifact(exe4);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
@@ -101,6 +95,7 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
         run_z80_test_suite_cmd.addArgs(args);
         run_single_step_tests_cmd.addArgs(args);
+        run_vdp_test_cmd.addArgs(args);
     }
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
@@ -111,8 +106,12 @@ pub fn build(b: *std.Build) void {
 
     const run_step2 = b.step("run-single-step-test", "Run the Z80 SingleStepTests suite");
     run_step2.dependOn(&run_single_step_tests_cmd.step);
+
     const run_step3 = b.step("run-z80-test-suite", "Run the Z80 Test suite");
     run_step3.dependOn(&run_z80_test_suite_cmd.step);
+
+    const run_step4 = b.step("run-vdp-test", "Run the VDP test (SDL)");
+    run_step4.dependOn(&run_vdp_test_cmd.step);
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
