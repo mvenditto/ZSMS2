@@ -371,6 +371,10 @@ pub const Z80State = packed struct {
         assert(ptr_info.Pointer.size == .One); // must be a single-item pointer
         assert(@typeInfo(ptr_info.Pointer.child) == .Struct); // must point to a struct
 
+        // lines (active-low)
+        state.int_line = LineHigh;
+        state.halt_line = LineHigh;
+
         state.PC = 0;
         state.I = 0;
         state.IFF1 = false;
