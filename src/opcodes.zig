@@ -2437,16 +2437,18 @@ pub fn halt(state: *Z80State, _: *const OpCode) u8 {
     //     if (requests > 0) break;
     // }
 
-    state.R.increment();
-    state.resetQ();
+    // state.R.increment();
+    // state.resetQ();
 
-    const requests: u3 = @bitCast(state.requests);
+    // const requests: u3 = @bitCast(state.requests);
 
-    if (requests > 0) {
-        state.PC +%= 1;
-    }
+    // if (requests > 0) {
+    //     state.PC +%= 1;
+    // }
 
-    return 4;
+    state.PC +%= 1;
+
+    return 0;
 }
 
 // zig fmt: off
@@ -2571,6 +2573,14 @@ pub fn exec(state: *Z80State, opcode: u8) void {
 
 pub fn execOne(s: *Z80State) void {
     const requests: u3 = @bitCast(s.requests);
+
+    if (s.halt_line == LineLow and requests == 0) { // active-low, is in halt state
+        s.R.increment(); // virtual fetch
+        s.resetQ(); // NOP
+        s.cycles +%= 4;
+        return;
+    }
+    
     if (requests > 0) {
         if (s.requests.nmi_signal) { // non-maskable interrupts (NMI)
             s.IFF1 = false;
