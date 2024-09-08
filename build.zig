@@ -54,8 +54,8 @@ pub fn build(b: *std.Build) void {
     exe3.root_module.addImport("build_options", build_options_mod);
 
     const exe4 = b.addExecutable(.{
-        .name = "vdp_test",
-        .root_source_file = b.path("src/vdp_test.zig"),
+        .name = "debugger",
+        .root_source_file = b.path("src/debugger.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -122,7 +122,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     const run_single_step_tests_cmd = b.addRunArtifact(exe2);
     const run_z80_test_suite_cmd = b.addRunArtifact(exe3);
-    const run_vdp_test_cmd = b.addRunArtifact(exe4);
+    const run_debugger_cmd = b.addRunArtifact(exe4);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
@@ -136,7 +136,7 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
         run_z80_test_suite_cmd.addArgs(args);
         run_single_step_tests_cmd.addArgs(args);
-        run_vdp_test_cmd.addArgs(args);
+        run_debugger_cmd.addArgs(args);
     }
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
@@ -151,8 +151,8 @@ pub fn build(b: *std.Build) void {
     const run_step3 = b.step("run-z80-test-suite", "Run the Z80 Test suite");
     run_step3.dependOn(&run_z80_test_suite_cmd.step);
 
-    const run_step4 = b.step("run-vdp-test", "Run the VDP test (SDL)");
-    run_step4.dependOn(&run_vdp_test_cmd.step);
+    const run_step4 = b.step("run-debugger", "Run the Debug environment (SDL)");
+    run_step4.dependOn(&run_debugger_cmd.step);
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
