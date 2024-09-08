@@ -50,8 +50,15 @@ pub fn renderFrame(self: *VDPState, cpu: *Z80State) void {
         self.processLineInterrupt(cpu);
 
         // cycles per frame
-        for (0..cycles_per_frame) |_| {
-            opcodes.execOne(cpu);
+        var cycles: u8 = 0;
+        while (cycles <= cycles_per_frame) {
+            const t = opcodes.execOne(cpu);
+
+            if (t == 0) {
+                break; // debugger attached
+            }
+
+            cycles += t;
         }
     }
 }
