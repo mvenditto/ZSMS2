@@ -373,12 +373,12 @@ pub const VDPState = struct {
         }
     }
 
-    fn getSpriteGenTableBaseAddress(self: *Self) u16 {
+    pub fn getSpriteGenTableBaseAddress(self: *Self) u16 {
         const r: u8 = self.registers[@intFromEnum(VDPRegister.sprite_pattern_gen_table_base_addr)] & 0b00000100;
         return @as(u14, r) << 11;
     }
 
-    fn getSpriteAttrTableBaseAddress(self: *Self) u16 {
+    pub fn getSpriteAttrTableBaseAddress(self: *Self) u16 {
         const r: u8 = self.registers[@intFromEnum(VDPRegister.sprite_attr_table_base_addr)] & 0b01111110;
         return @as(u14, r) << 7;
     }
