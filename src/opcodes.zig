@@ -60,7 +60,7 @@ const CF = 1;
 const InstructionFn = *const fn (*Z80State, *const OpCode) u8;
 
 /// Defines how to retrieve data.
-const AddressingMode = enum {
+pub const AddressingMode = enum {
     /// Fetch the contents of a register.
     ///
     /// Mnemonic: `r`
@@ -2571,14 +2571,14 @@ pub fn exec(state: *Z80State, opcode: u8) void {
     state.cycles +%= insn_cycles;
 }
 
-pub fn execOne(s: *Z80State) void {
+pub fn execOne(s: *Z80State) u8 {
     const requests: u3 = @bitCast(s.requests);
 
     if (s.halt_line == LineLow and requests == 0) { // active-low, is in halt state
         s.R.increment(); // virtual fetch
         s.resetQ(); // NOP
         s.cycles +%= 4;
-        return;
+        return 4;
     }
     
     if (requests > 0) {
@@ -2598,7 +2598,7 @@ pub fn execOne(s: *Z80State) void {
             s.WZ.low = 0x66;
             s.WZ.high = 0;
             s.cycles +%= 11;
-            return;
+            return 11;
         } else if (s.requests.int_signal and (s.IFF1 and s.IFF2)) { // maskable interrupts (INT)
             s.resetSignals();
             s.IFF1 = false;
@@ -2624,6 +2624,7 @@ pub fn execOne(s: *Z80State) void {
                     s.WZ.high = 0;
                     s.resetQ();
                     s.cycles +%= 13;
+                    return 13;
                 },
                 2 => {
                     var sp = s.SP.getValue();
@@ -2639,24 +2640,33 @@ pub fn execOne(s: *Z80State) void {
                     s.PC = s.WZ.getValue();
                     s.resetQ();
                     s.cycles +%= 19;
+                    return 19;
                 },
                 else => {},
             }
 
-            return;
+            return 0;
         }
     }
 
     const opcode = fetchOpcode(s);
     const decoded: *const OpCode = @ptrCast(&opcode);
     const insn_func = instructions_table[opcode];
+    
+    if(s.dbgBeforeExecFn)|dbg_before_cb| {
+        dbg_before_cb(s.ctx, opcode);
+
+        if (s.dbg_trap == true) {
+            return 0;
+        }
+    }
+    
     const insn_cycles = insn_func(s, decoded);
     s.cycles +%= insn_cycles;
-}
 
-pub fn execLoop(s: *Z80State) void {
-    while(true)
-    {
-        execOne(s);
+    if(s.dbgAfterExecFn)|dbg_after_cb| {
+        dbg_after_cb(s.ctx, opcode);
     }
+
+    return insn_cycles;
 }
