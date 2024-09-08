@@ -66,8 +66,49 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    if (sdl_dep) |sdl| {
-        exe4.linkLibrary(sdl.artifact("SDL2"));
+    const sdl_artifact = sdl_dep.?.artifact("SDL2");
+    exe4.linkLibrary(sdl_artifact);
+
+    var freetype_dep = b.dependency("freetype", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    const freetype_lib = freetype_dep.artifact("freetype");
+    exe4.root_module.linkLibrary(freetype_lib);
+    exe4.root_module.addImport("freetype", freetype_dep.module("freetype"));
+
+    // add imgui
+    {
+        const imgui_enable_freetype = true;
+        var imgui_dep = b.dependency("imgui", .{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .enable_freetype = imgui_enable_freetype,
+        });
+        const imgui_lib = imgui_dep.artifact("imgui");
+        exe4.root_module.linkLibrary(imgui_lib);
+        exe4.root_module.addImport("imgui", imgui_dep.module("imgui"));
+
+        // Add <ft2build.h> to ImGui so it can compile with Freetype support
+        if (imgui_enable_freetype) {
+            for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
+                switch (freetype_include_dir) {
+                    .path => |p| imgui_lib.addIncludePath(p),
+                    else => {}, // std.debug.panic("unhandled path from Freeytpe: {s}", .{@tagName(freetype_include_dir)}),
+                }
+            }
+        }
+
+        // Add <SDL.h> to ImGui so it can compile with Freetype support
+        for (sdl_artifact.root_module.include_dirs.items) |sdl_include_dir| {
+            switch (sdl_include_dir) {
+                .path => |p| {
+                    std.debug.print("SDL-INCLUDE: {any}\n", .{p});
+                    imgui_lib.addIncludePath(p);
+                },
+                else => {}, // std.debug.panic("unhandled path from Freeytpe: {s}", .{@tagName(freetype_include_dir)}),
+            }
+        }
     }
 
     // This declares intent for the executable to be installed into the
@@ -130,7 +171,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-
+    exe_unit_tests.root_module.addImport("build_options", build_options_mod);
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

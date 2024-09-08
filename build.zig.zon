@@ -21,6 +21,12 @@
             .hash = "1220c8b7fffe055e95a991cbaf5d86b4d5ea380294b0b4326b2ee46110613cf7972e",
             .lazy = true,
         },
+        .freetype = .{
+            .path = "third_party/freetype",
+        },
+        .imgui = .{
+            .path = "third_party/imgui",
+        },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
         //    // When updating this field to a new URL, be sure to delete the corresponding
