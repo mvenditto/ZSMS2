@@ -128,7 +128,7 @@ pub const VDPRegister0 = packed struct(u8) {
     m2: bool, // 1 - Must be 1 for M1/M3 to change screen height in M4 otherwise has no effect
     m4: bool, // 2 - Enable the SMS mode
     ec: bool, // 3 - Shift sprites left 8px
-    ie1: bool, // 4 - Interrupt enable 1
+    h_blank_on: bool, // 4 - Interrupt enable 1 - HBlank ON
     blank_col_0: bool, // 5 - Mask column 0 with overscan color from register 7
     fix_top_2_rows: bool, // 6 - Disable horizontal scrolling for rows 0-1
     fix_right_8_cols: bool, // 7 - Disable vertical scrolling for cols 24-31
@@ -141,7 +141,7 @@ pub const VDPRegister1 = packed struct(u8) {
     _unused_2: bool, // 2 - no effect
     m3: bool, // 3 - Selects 240-line screen for Mode 4 if M2=1, otherwise it has no effect.
     m1: bool, // 4 - Selects 224-line screen for Mode 4 if M2=1, otherwise it has no effect.
-    ie0: bool, // 5 - 1= Line interrupt enable (vsync?)
+    v_blank_on: bool, // 5 - 1= Line interrupt enable (vsync?) - VBlank ON
     display_on: bool, // 6 (BLANK) - 1= Enables the active display, 0 = causes the active display area to blank
     enable_16k_vram: bool = true, // 7 always set on the SMS
 };
@@ -263,7 +263,7 @@ pub const VDPState = struct {
     display_lines: u8 = 192, // can be 192 (default), 224 or 240.
 
     /// The display frame buffer.
-    display_buffer: [256 * 256]u8,
+    display_buffer: []u8 = undefined,
 
     /// The scanline currently being processed.
     scanline: u9 = 0,
@@ -320,25 +320,40 @@ pub const VDPState = struct {
     //  changed again.
     h_counter: u9 = 0x80,
 
+    allocator: std.mem.Allocator,
+
     const Self = @This();
 
     pub fn updateVideoMode(self: *Self) void {
         const r0: VDPRegister0 = @bitCast(self.registers[0]);
 
+        const old_display_lines = self.display_lines;
+
         if (self.device_type == .sms and r0.m4) {
             self.display_lines = 192;
-            return;
+        } else {
+            const r1: VDPRegister1 = @bitCast(self.registers[1]);
+
+            const mode = (@as(u8, @intFromBool(r0.m4)) << 3) | (@as(u8, @intFromBool(r1.m3)) << 2) | (@as(u8, @intFromBool(r0.m2)) << 1) | @as(u8, @intFromBool(r1.m1));
+
+            self.display_lines = switch (mode) {
+                //
+                0b1011 => 224,
+                0b1110 => 240,
+                else => 192,
+            };
         }
 
-        const r1: VDPRegister1 = @bitCast(self.registers[1]);
+        if (self.display_lines != old_display_lines) {
+            self.allocator.free(self.display_buffer);
 
-        const mode = (@as(u8, @intFromBool(r0.m4)) << 3) | (@as(u8, @intFromBool(r1.m3)) << 2) | (@as(u8, @intFromBool(r0.m2)) << 1) | @as(u8, @intFromBool(r1.m1));
+            self.display_buffer = self.allocator.alloc(u8, @as(usize, 256) * (self.display_lines + 1)) catch |err| {
+                std.debug.panic("Failed to alloc new display buffer: {any}.\n", .{err});
+            };
 
-        switch (mode) {
-            //
-            0b1011 => self.display_lines = 224,
-            0b1110 => self.display_lines = 240,
-            else => self.display_lines = 192,
+            for (0..self.display_buffer.len) |i| {
+                self.display_buffer[i] = 0;
+            }
         }
     }
 
@@ -358,12 +373,12 @@ pub const VDPState = struct {
         }
     }
 
-    fn getSpriteGenTableBaseAddress(self: *Self) u16 {
+    pub fn getSpriteGenTableBaseAddress(self: *Self) u16 {
         const r: u8 = self.registers[@intFromEnum(VDPRegister.sprite_pattern_gen_table_base_addr)] & 0b00000100;
         return @as(u14, r) << 11;
     }
 
-    fn getSpriteAttrTableBaseAddress(self: *Self) u16 {
+    pub fn getSpriteAttrTableBaseAddress(self: *Self) u16 {
         const r: u8 = self.registers[@intFromEnum(VDPRegister.sprite_attr_table_base_addr)] & 0b01111110;
         return @as(u14, r) << 7;
     }
@@ -422,6 +437,8 @@ pub const VDPState = struct {
         const w = self.ctrl_word.payload.reg_write_payload;
         self.registers[w.register] = w.data;
 
+        // TODO: unassert IRQ line in case h_blank_on (r0 & 0x10) gets unset.
+
         if (w.register <= 1) {
             self.updateVideoMode();
         }
@@ -476,7 +493,7 @@ pub const VDPState = struct {
 
         // Bit 5 of register 1 (ie0 here) acts like a on/off switch for the VDP's IRQ line and
         // as long as bit 7 of the status flags is set, the VDP will assert the IRQ.
-        if (r1.ie0) {
+        if (r1.v_blank_on) {
             cpu.requests.int_signal = self.status_flags.frame_interrupt_pending;
         }
     }
@@ -530,10 +547,13 @@ pub const VDPState = struct {
     pub fn init(allocator: std.mem.Allocator) !*VDPState {
         const state = try allocator.create(Self);
 
+        state.allocator = allocator;
         state.ctrl_is_second_byte = false;
         state.ctrl_buffer = 0;
         state.read_ahead_buff = 0;
         state.display_lines = 192;
+
+        state.display_buffer = try allocator.alloc(u8, @as(usize, 256) * (state.display_lines + 1));
 
         for (0..state.display_buffer.len) |i| {
             state.display_buffer[i] = 0;

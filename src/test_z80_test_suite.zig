@@ -277,6 +277,8 @@ fn runTest(test_rom: TestRom) !void {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     defer s.deinit(std.heap.page_allocator);
 
@@ -377,7 +379,7 @@ fn runTest(test_rom: TestRom) !void {
     }
 
     while (true) {
-        opcodes.execOne(s);
+        _ = opcodes.execOne(s);
 
         switch (test_rom.platform) {
             .cpm => switch (s.PC) {

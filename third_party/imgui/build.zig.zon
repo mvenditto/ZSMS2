@@ -1,0 +1,19 @@
+.{
+    .name = "imgui",
+    .version = "1.90.8",
+    .dependencies = .{
+        .imgui = .{
+            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.90.8-docking.tar.gz",
+            .hash = "122065151b97161e25abb71c9df2fd9fba42aaca8c33d689a480b883d82411c8fabe",
+        },
+        .cimgui = .{
+            .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.90.8dock.tar.gz",
+            .hash = "12207ee69164f88f4b41ee5d44edf3835ec4dab0c0cd885799da67d56668f4a3d46b",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

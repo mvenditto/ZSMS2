@@ -65,6 +65,8 @@ const OpcodeTest = struct {
             impl.write,
             impl.ioRead,
             impl.ioWrite,
+            undefined,
+            undefined,
         );
 
         const init = self.initial;

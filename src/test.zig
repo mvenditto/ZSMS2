@@ -59,6 +59,8 @@ test "test IO" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
 
     io.memory[1234] = 124;
@@ -80,6 +82,8 @@ test "xz" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     s.BC.high = 10;
     s.BC.low = 11;
@@ -106,6 +110,8 @@ test "16 bit registers set/get" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
 
     var i: u16 = 0;
@@ -136,6 +142,8 @@ test "Flags register set/get" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     if (false) {
         r.AF.setFlags(0b00000000);
@@ -278,6 +286,8 @@ test "register array access" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     const expected = [8]u8{ 10, 11, 20, 21, 30, 31, 255, 41 };
 
@@ -307,6 +317,8 @@ test "register pairs array access" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     const expected = [4]u16{ 8192, 16384, 32768, 65535 };
 
@@ -334,6 +346,8 @@ test "ADD A,r" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     state.AF.A = 0x44;
     _ = op.add_a_x(state, 0x11);
@@ -379,6 +393,8 @@ test "FD-DD sequence" {
         TestIO.write,
         TestIO.ioRead,
         TestIO.ioWrite,
+        undefined,
+        undefined,
     );
     defer s.deinit(std.heap.page_allocator);
 

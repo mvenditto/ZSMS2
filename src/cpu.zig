@@ -220,7 +220,13 @@ pub const IOWriteFnPtr = *const fn (
     value: u8,
 ) void;
 
-pub const InterruptAck = *const fn (ctx: *anyopaque) u8;
+/// Called by the emulator before a fetched opcode is executed, if the debugger is attached.
+pub const DbgOpCodeCallback = *const fn (
+    /// The context, as passed when initializing the `Z80State`.
+    ctx: *anyopaque,
+    /// The opcode about to execute.
+    opcode: u8,
+) void;
 
 pub const Z80Requests = packed struct(u3) {
     /// Maskable interrupt request.
@@ -277,10 +283,10 @@ pub const Z80State = packed struct {
     _q7: *u8 = undefined, // A
 
     // Index: BC,DE,HL,SP
-    _d0: *SixteenBitRegister = undefined, // B
-    _d1: *SixteenBitRegister = undefined, // C
-    _d2: *SixteenBitRegister = undefined, // D
-    _d3: *SixteenBitRegister = undefined, // E
+    _d0: *SixteenBitRegister = undefined, // BC
+    _d1: *SixteenBitRegister = undefined, // DE
+    _d2: *SixteenBitRegister = undefined, // HL
+    _d3: *SixteenBitRegister = undefined, // SP
 
     /// The Program Counter.
     PC: u16 = 0,
@@ -335,7 +341,8 @@ pub const Z80State = packed struct {
     memWriteFn: WriteFnPtr,
     ioReadFn: IOReadFnPtr,
     ioWriteFn: IOWriteFnPtr,
-    intAck: InterruptAck,
+    dbgBeforeExecFn: ?DbgOpCodeCallback,
+    dbgAfterExecFn: ?DbgOpCodeCallback,
 
     // !!!
     // NOTE: bool fields, MUST stay after the function pointers, see: https://github.com/ziglang/zig/issues/20539
@@ -353,6 +360,10 @@ pub const Z80State = packed struct {
     int_line: u1 = LineHigh,
     halt_line: u1 = LineHigh,
 
+    // if true, before executing the next fetched opcode,
+    // the emulator will call the dbg_* callbacks.
+    dbg_trap: bool = false,
+
     const Self = @This();
 
     pub fn init(
@@ -362,7 +373,8 @@ pub const Z80State = packed struct {
         write_fn: WriteFnPtr,
         io_read_fn: IOReadFnPtr,
         io_write_fn: IOWriteFnPtr,
-        // int_ack: InterruptAck,
+        dbg_before_exec_fn: ?DbgOpCodeCallback,
+        dbg_after_exec_fn: ?DbgOpCodeCallback,
     ) !*Self {
         var state = try allocator.create(Self);
 
@@ -370,6 +382,10 @@ pub const Z80State = packed struct {
         assert(ptr_info == .Pointer); // must be a pointer
         assert(ptr_info.Pointer.size == .One); // must be a single-item pointer
         assert(@typeInfo(ptr_info.Pointer.child) == .Struct); // must point to a struct
+
+        // lines (active-low)
+        state.int_line = LineHigh;
+        state.halt_line = LineHigh;
 
         state.PC = 0;
         state.I = 0;
@@ -402,13 +418,16 @@ pub const Z80State = packed struct {
         state.memWriteFn = write_fn;
         state.ioReadFn = io_read_fn;
         state.ioWriteFn = io_write_fn;
-        state.intAck = undefined;
+        state.dbgBeforeExecFn = dbg_before_exec_fn;
+        state.dbgAfterExecFn = dbg_after_exec_fn;
 
         state.requests = Z80Requests{
             .int_signal = false,
             .nmi_signal = false,
             .rst_signal = false,
         };
+
+        state.dbg_trap = false;
 
         // registers
         state.gp_registers = @ptrCast(state);
@@ -476,10 +495,6 @@ pub const Z80State = packed struct {
 
     pub fn ioWrite(self: *const Self, port: u16, value: u8) void {
         self.ioWriteFn(self.ctx, port, value);
-    }
-
-    pub fn interruptAck(self: *const Self) u8 {
-        return self.intAck(self.ctx);
     }
 
     pub fn resetSignals(self: *Self) void {
