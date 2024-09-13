@@ -448,6 +448,7 @@ pub const VDPState = struct {
         const address = self.ctrl_word.payload.address;
         self.cram[address & 0x001F] = @bitCast(value); // wraps around 0x001F (0-31)
         self.ctrl_word.payload.address +%= 1; // wraps around at 0x3FFF
+        self.read_ahead_buff = value;
     }
 
     pub fn dataWrite(self: *Self, value: u8) void {
