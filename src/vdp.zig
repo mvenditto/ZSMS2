@@ -286,10 +286,7 @@ pub const VDPState = struct {
     /// If true, the byte on the control port is the second one in the 2-byte control sequence.
     ctrl_is_second_byte: bool = false,
 
-    /// Stores the latest byte from the control port,
-    ctrl_buffer: u8,
-
-    /// Stores the current control word read from the control port.
+    /// Stores the current control word (address reg + code reg) read from the control port 2-byte sequence.
     ctrl_word: VDPControlWord = 0,
 
     /// The status flags.
@@ -394,10 +391,10 @@ pub const VDPState = struct {
 
     pub fn ctrlWrite(self: *Self, value: u8) void {
         if (self.ctrl_is_second_byte == false) {
-            self.ctrl_buffer = value;
+            self.ctrl_word.payload.address = (self.ctrl_word.payload.address & 0x3F00) | value; // set lower 8-bits of addr reg
             self.ctrl_is_second_byte = true;
         } else {
-            const ctrl_word = self.ctrl_buffer | (@as(u16, value) << 8);
+            const ctrl_word = self.ctrl_word.payload.address & 0x00FF | (@as(u16, value) << 8);
             self.ctrl_word = @bitCast(ctrl_word);
             self.ctrl_is_second_byte = false;
 
@@ -550,7 +547,6 @@ pub const VDPState = struct {
 
         state.allocator = allocator;
         state.ctrl_is_second_byte = false;
-        state.ctrl_buffer = 0;
         state.read_ahead_buff = 0;
         state.display_lines = 192;
 
@@ -568,6 +564,7 @@ pub const VDPState = struct {
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.display_buffer);
         allocator.destroy(self);
     }
 };
@@ -597,7 +594,7 @@ test "Control word write" {
 
     vdp.ctrlWrite(control_word & 0xFF);
 
-    try expectEqual(control_word & 0xFF, vdp.ctrl_buffer);
+    try expectEqual(control_word & 0xFF, vdp.ctrl_word.payload.address & 0xFF);
     try expectEqual(true, vdp.ctrl_is_second_byte);
 
     vdp.ctrlWrite((control_word >> 8) & 0xFF);
