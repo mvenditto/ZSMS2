@@ -164,7 +164,7 @@ const VDPRegister5 = packed struct(u8) {
 };
 
 /// Sprite Pattern Generator Base Address
-const VDPRegister6 = packed struct(u8) {
+pub const VDPRegister6 = packed struct(u8) {
     _unused_0: u1,
     _unused_1: u1,
     sprite_pattern_gen_addr: u1, // bit 13 of the sprite_attr_table_addr
@@ -249,6 +249,12 @@ const Pattern = packed struct {
     }
 };
 
+const VdpSprite = struct {
+    x: u8,
+    y: u8,
+    pattern_idx: u9,
+};
+
 pub const VDPState = struct {
     /// The CPU
     cpu: Z80State,
@@ -269,7 +275,16 @@ pub const VDPState = struct {
     scanline: u9 = 0,
 
     /// The scanline priority buffer.
-    scanline_priprity_buffer: [256]u8,
+    scanline_priority_buffer: [256]u8,
+
+    /// The scanline sprite collision buffer.
+    sprite_collision_buffer: [256]bool,
+
+    /// The buffer containing sprites to rendere on the next scanline.
+    sprites_buffer: [8]VdpSprite,
+
+    /// The index into `sprites_buffer`
+    sprites_idx: u4,
 
     /// Write-only control registers. Only 0 to 9 has effect.
     registers: [16]u8,
@@ -549,6 +564,7 @@ pub const VDPState = struct {
         state.ctrl_is_second_byte = false;
         state.read_ahead_buff = 0;
         state.display_lines = 192;
+        state.sprites_idx = 0;
 
         state.display_buffer = try allocator.alloc(u8, @as(usize, 256) * (state.display_lines + 1));
 
