@@ -1,13 +1,15 @@
 /// The debugger environment used for development / debugging.
 ///
 /// NOTE: This is probably inefficient, buggy and mostly duck-taped together, but it
-/// is ok because it is not meant to be used for other than fixing broken/missing core functionality.
+/// is ok because it is not meant to be used for anything other than fixing broken/missing core functionality.
 ///
 /// KNOWN BUGS / LIMITATIONS:
 ///   * [UI] windows does not auto-dock, use an imgui.ini fro a release zip
 ///   * [DEBUGGER] no ability to add breakpoints at runtime
 ///   * [DEBUGGER] no ability to "step over"
 ///   * [DEBUGGER] not tested (yet) on larger roms (> 32K)
+///   * BIOS ROM not working as-is
+///   * SEGA Mappare only
 ///   * and many more
 ///
 const std = @import("std");
@@ -26,18 +28,18 @@ const c = @cImport({
 
 const imgui = @import("imgui");
 
-fn dumpMemory(mem: []u8) void {
+fn dumpMemory(sms: *const SMS2) void {
     var offset: usize = 0x0000;
-    std.debug.print("  Len={d}\n", .{mem.len});
-    while (offset < mem.len) : (offset += 16) {
+    std.debug.print("  Len={d}\n", .{64 * 1024});
+    while (offset < 64 * 1024) : (offset += 16) {
         std.debug.print("{X:0>4}-{X:0>4} | ", .{ offset, offset + 15 });
         inline for (0..16) |j| {
-            const byte = mem[offset + j];
+            const byte = SMS2.read(sms, @as(u16, @intCast(offset + j)));
             std.debug.print("{X:0>2} ", .{byte});
         }
         std.debug.print("|", .{});
         inline for (0..16) |j| {
-            const byte = mem[offset + j];
+            const byte = SMS2.read(sms, @as(u16, @intCast(offset + j)));
             if (std.ascii.isPrint(byte)) {
                 std.debug.print("{c}", .{byte});
             } else {
@@ -252,15 +254,10 @@ pub const SMS2 = struct {
     pub fn read(ctx: *const anyopaque, address: u16) u8 {
         const self: *Self = @ptrCast(@constCast(@alignCast(ctx)));
 
-        if (address < 0x03ff) {
-            return self.memory[address];
-        }
-
         var value: u8 = 0xff;
 
         if (address < 0xc000) {
             const port3E = self.ports[0x3e]; // NOTE: Bits are active low: 1 = disable, 0 = enable.
-
             if (port3E & 0x48 == 0x48) { // bit 3 (BIOS ROM) and 7 (Cartridge slot) both NOT enabled
                 value = 0xff;
             } else if (port3E & 0x40 == 0x40) { // BIOS mapped
@@ -285,7 +282,6 @@ pub const SMS2 = struct {
         } else {
             value = self.sys_ram[address & SytemRamSizeMask];
         }
-
         return value;
     }
 
@@ -298,7 +294,7 @@ pub const SMS2 = struct {
                 switch (self.sram_bank_select) {
                     RamBank0 => sram[(address & BankSizeMask) % sram.len] = value,
                     RamBank1 => sram[(BankSize + (address & BankSizeMask)) % sram.len] = value,
-                    else => std.debug.panic("Writing to cartridge RAM failed\n", .{}),
+                    else => {}, // std.debug.panic("Writing to cartridge RAM failed\n", .{}),
                 }
             }
         }
@@ -404,20 +400,34 @@ pub fn main() !void {
     sio.rom_banks_num = @max(1, @as(u8, @intCast(rom.len / SMS2.BankSizeMask)));
     std.debug.print("Copied {d}KB of ROM to RAM ({d} banks).\n", .{ rom.len / 1024, sio.rom_banks_num });
 
-    var offset: u16 = 0;
+    var offset: u32 = 0;
     var program = std.ArrayList(disasm.DecodedOpCode).init(allocator);
     defer program.deinit();
 
     if (args.next()) |arg2| {
         if (std.mem.eql(u8, arg2, "--dbg-attach")) {
-            std.debug.print("Debugger enabled.", .{});
+            std.debug.print("Debugger enabled.\n", .{});
             sio.dbg_attached = true;
             try sio.dbg_breakpoints.append(0);
         }
     }
 
-    while (offset < 0x7FEF) {
-        var decoded = try disasm.decode(rom[offset..]);
+    if (args.next()) |arg3| {
+        if (std.mem.eql(u8, arg3, "--bios")) {
+            if (args.next()) |bios_path| {
+                std.debug.print("Loading BIOS: {s}\n", .{bios_path});
+                const bios_file = try std.fs.openFileAbsolute(bios_path, .{ .mode = .read_only });
+                const bios_rom = try bios_file.reader().readAllAlloc(allocator, 1024 * 48);
+                sio.bios_rom = try allocator.alloc(u8, bios_rom.len);
+                std.mem.copyForwards(u8, sio.bios_rom.?, bios_rom);
+                defer allocator.free(bios_rom);
+                SMS2.ioWrite(sio, 0x3e, 0x40); // bios mapped
+            }
+        }
+    }
+
+    while (offset < sio.rom.len) { // bios_rom
+        var decoded = try disasm.decode(sio.rom[offset..]); // bios_rom
 
         if (decoded.op == .nop) {
             offset += 1;
@@ -437,7 +447,7 @@ pub fn main() !void {
     SMS2.write(sio, 0xfffe, 1);
     SMS2.write(sio, 0xffff, 2);
 
-    std.mem.copyForwards(u8, &sio.memory, rom);
+    sio.rom = rom;
 
     sio.cpu.PC = 0x0000;
     sio.cpu.SP.setValue(0xdff0);
@@ -462,7 +472,7 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(window);
 
-    const renderer = c.SDL_CreateRenderer(window, -1, 0) orelse { // c.SDL_RENDERER_PRESENTVSYNC
+    const renderer = c.SDL_CreateRenderer(window, -1, c.SDL_RENDERER_PRESENTVSYNC) orelse { // c.SDL_RENDERER_PRESENTVSYNC
         c.SDL_Log("Unable to create renderer: %s", c.SDL_GetError());
         return error.SDLInitializationFailed;
     };
@@ -529,6 +539,8 @@ pub fn main() !void {
     const table_fmt_buf: [:0]u8 = @ptrCast(try allocator.alloc(u8, 32));
     defer allocator.free(table_fmt_buf);
 
+    var sprite_palette: bool = false;
+
     while (!quit) {
         var event: c.SDL_Event = undefined;
 
@@ -559,7 +571,7 @@ pub fn main() !void {
                         1073741903 => sio.ports[0xdc] |= (@as(u8, 1) << 3), // RIGHT
                         122 => sio.ports[0xdc] |= (@as(u8, 1) << 4), // A
                         120 => sio.ports[0xdc] |= (@as(u8, 1) << 5), // B
-                        99 => dumpVRAM(sio), // C
+                        99 => dumpMemory(sio), // C
                         118 => dumpVDPTablesOffsets(sio), // V
                         103 => { // G
                             std.debug.print("stdout_col={d}, stdout_row={d}, menu_pos={d}, menu_pos_old={d},\n", .{
@@ -591,56 +603,6 @@ pub fn main() !void {
 
         _ = c.SDL_SetRenderDrawColor(renderer, 64, 63, 64, 255);
         _ = c.SDL_RenderClear(renderer);
-
-        { // Render VRAM patterns
-            var vi: usize = 0;
-            var px: usize = 1;
-            var py: usize = 1;
-
-            var w: c_int = 0;
-            var h: c_int = 0;
-            var format: u32 = 0;
-            _ = c.SDL_QueryTexture(patterns_texture, &format, null, &w, &h);
-
-            var pixels: [*c]u32 = undefined;
-            var pitch: c_int = 0; // Len of 1 row in bytes
-
-            if (c.SDL_LockTexture(patterns_texture, null, @ptrCast(&pixels), &pitch) != 0) {
-                std.debug.panic("SDLError: {s}\n", .{c.SDL_GetError()});
-            }
-
-            for (0..@as(usize, @intCast(w))) |x| {
-                for (0..@as(usize, @intCast(h))) |y| {
-                    const pixel_idx = y * @as(usize, @intCast(@divTrunc(pitch, 4))) + x;
-                    pixels[@as(usize, @intCast(pixel_idx))] = clear_color;
-                }
-            }
-
-            while (vi < sio.vdp.vram.len - 32) {
-                inline for (0..8) |i| {
-                    inline for (0..8) |j| {
-                        const pixel_idx = (py + i) * @as(usize, @intCast(@divTrunc(pitch, 4))) + (px + (7 - j));
-                        const bp_0 = (sio.vdp.vram[vi + 0] >> j) & 1; // bitplane 0
-                        const bp_1 = (sio.vdp.vram[vi + 1] >> j) & 1; // bitplane 1
-                        const bp_2 = (sio.vdp.vram[vi + 2] >> j) & 1; // bitplane 2
-                        const bp_3 = (sio.vdp.vram[vi + 3] >> j) & 1; // bitplane 3
-                        const ij_color = bp_0 | (bp_1 << 1) | (bp_2 << 2) | (bp_3 << 3);
-                        const vdp_col = sio.vdp.cram[ij_color];
-                        const col = vdp_col.toRGB8();
-                        const color = (@as(u32, 255)) | (@as(u32, col.b) << 8) | (@as(u32, col.g) << 16) | (@as(u32, col.r) << 24);
-                        pixels[@as(usize, @intCast(pixel_idx))] = color;
-                    }
-                    vi += 4;
-                }
-                px += 8 + 1;
-                if ((vi / 32) % 16 == 0) { // px >= 16 * 8
-                    px = 1;
-                    py += 8 + 1;
-                }
-            }
-
-            c.SDL_UnlockTexture(patterns_texture);
-        }
 
         { // Render screen to texture
             var w: c_int = 0;
@@ -714,12 +676,64 @@ pub fn main() !void {
 
             { // Window: Patterns (BG)
                 _ = imgui.igBegin("VRAM", &show_window, imgui.ImGuiWindowFlags_None);
+                _ = imgui.igCheckbox("Sprite palette", &sprite_palette);
                 const img_size = imgui.ImVec2{ .x = 2 * (17 + (8 * 16)), .y = 2 * (33 + (8 * 32)) };
                 const win_size = imgui.ImVec2{
                     .x = img_size.x + 16,
                     .y = img_size.y + (14 + (frame_padding * 2)), // adjust for title bar heigth
                 };
                 imgui.igSetWindowSize_Vec2(win_size, imgui.ImGuiCond_Always);
+
+                { // Render VRAM patterns
+                    var vi: usize = 0;
+                    var px: usize = 1;
+                    var py: usize = 1;
+
+                    var w: c_int = 0;
+                    var h: c_int = 0;
+                    var format: u32 = 0;
+                    _ = c.SDL_QueryTexture(patterns_texture, &format, null, &w, &h);
+
+                    var pixels: [*c]u32 = undefined;
+                    var pitch: c_int = 0; // Len of 1 row in bytes
+
+                    if (c.SDL_LockTexture(patterns_texture, null, @ptrCast(&pixels), &pitch) != 0) {
+                        std.debug.panic("SDLError: {s}\n", .{c.SDL_GetError()});
+                    }
+
+                    for (0..@as(usize, @intCast(w))) |x| {
+                        for (0..@as(usize, @intCast(h))) |y| {
+                            const pixel_idx = y * @as(usize, @intCast(@divTrunc(pitch, 4))) + x;
+                            pixels[@as(usize, @intCast(pixel_idx))] = clear_color;
+                        }
+                    }
+
+                    while (vi < sio.vdp.vram.len - 32) {
+                        inline for (0..8) |i| {
+                            inline for (0..8) |j| {
+                                const pixel_idx = (py + i) * @as(usize, @intCast(@divTrunc(pitch, 4))) + (px + (7 - j));
+                                const bp_0 = (sio.vdp.vram[vi + 0] >> j) & 1; // bitplane 0
+                                const bp_1 = (sio.vdp.vram[vi + 1] >> j) & 1; // bitplane 1
+                                const bp_2 = (sio.vdp.vram[vi + 2] >> j) & 1; // bitplane 2
+                                const bp_3 = (sio.vdp.vram[vi + 3] >> j) & 1; // bitplane 3
+                                const ij_color = bp_0 | (bp_1 << 1) | (bp_2 << 2) | (bp_3 << 3);
+                                const vdp_col = sio.vdp.cram[ij_color + (@as(u8, @intFromBool(sprite_palette)) * 16)];
+                                const col = vdp_col.toRGB8();
+                                const color = (@as(u32, 255)) | (@as(u32, col.b) << 8) | (@as(u32, col.g) << 16) | (@as(u32, col.r) << 24);
+                                pixels[@as(usize, @intCast(pixel_idx))] = color;
+                            }
+                            vi += 4;
+                        }
+                        px += 8 + 1;
+                        if ((vi / 32) % 16 == 0) { // px >= 16 * 8
+                            px = 1;
+                            py += 8 + 1;
+                        }
+                    }
+
+                    c.SDL_UnlockTexture(patterns_texture);
+                }
+
                 imgui.igImage(
                     @ptrCast(patterns_texture),
                     img_size,
@@ -867,11 +881,11 @@ pub fn main() !void {
                             }
 
                             if (imgui.igTableNextColumn()) {
-                                imgui.igText("%04X", @as(u16, insn.offset));
+                                imgui.igText("%04X", @as(u32, insn.offset));
                             }
                             if (imgui.igTableNextColumn()) {
                                 const addr = insn.offset;
-                                const seq_fmt = std.fmt.fmtSliceHexUpper(rom[addr .. addr + insn.seq_len]);
+                                const seq_fmt = std.fmt.fmtSliceHexUpper(sio.rom[addr .. addr + insn.seq_len]); // bios_rom
                                 const printed = try std.fmt.bufPrint(table_fmt_buf, "{s}", .{seq_fmt});
                                 table_fmt_buf[printed.len] = "\x00"[0];
                                 imgui.igText("%s", printed.ptr);
@@ -967,14 +981,16 @@ pub fn main() !void {
                     outer_size,
                     0.0,
                 )) {
-                    for (0..8) |ri| {
+                    for (0..11) |ri| {
                         imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
                         if (imgui.igTableSetColumnIndex(0)) {
-                            const reg_val = sio.cpu.gp_registers[ri];
-                            const reg_name = @tagName(@as(cpu.EightBitRegisters, @enumFromInt(ri)));
-                            imgui.igTextColored(im_yellow_vec4, "%s", reg_name.ptr);
-                            imgui.igSameLine(0, 10);
-                            imgui.igText("0x%02X", reg_val);
+                            if (ri < 8) {
+                                const reg_val = sio.cpu.gp_registers[ri];
+                                const reg_name = @tagName(@as(cpu.EightBitRegisters, @enumFromInt(ri)));
+                                imgui.igTextColored(im_yellow_vec4, "%s", reg_name.ptr);
+                                imgui.igSameLine(0, 10);
+                                imgui.igText("0x%02X", reg_val);
+                            }
                         }
                         if (imgui.igTableSetColumnIndex(1)) {
                             if (ri < 4) {
@@ -995,6 +1011,14 @@ pub fn main() !void {
                                 imgui.igTextColored(im_yellow_vec4, "IY");
                                 imgui.igSameLine(0, 10);
                                 imgui.igText("0x%04X", sio.cpu.IY.getValue());
+                            } else if (ri == 9) {
+                                imgui.igTextColored(im_yellow_vec4, "IFF1");
+                                imgui.igSameLine(0, 10);
+                                imgui.igText("%d", @as(u8, @intFromBool(sio.cpu.IFF1)));
+                            } else if (ri == 10) {
+                                imgui.igTextColored(im_yellow_vec4, "IFF2");
+                                imgui.igSameLine(0, 10);
+                                imgui.igText("%d", @as(u8, @intFromBool(sio.cpu.IFF2)));
                             }
                         }
 
@@ -1014,8 +1038,55 @@ pub fn main() !void {
                                 imgui.igTextColored(im_yellow_vec4, "R");
                                 imgui.igSameLine(0, 10);
                                 imgui.igText("0x%02X", sio.cpu.R.getValue());
+                            } else if (ri == 9) {
+                                imgui.igTextColored(im_yellow_vec4, "IM");
+                                imgui.igSameLine(0, 10);
+                                imgui.igText("%d", sio.cpu.IM);
                             }
                         }
+                    }
+                    imgui.igEndTable();
+                }
+
+                imgui.igEnd();
+            }
+
+            { // VDP Registers
+                _ = imgui.igBegin("VDP Registers", &show_window, imgui.ImGuiWindowFlags_None);
+
+                const table_flags = imgui.ImGuiTableFlags_ScrollY |
+                    imgui.ImGuiTableFlags_RowBg |
+                    imgui.ImGuiTableFlags_BordersOuter |
+                    imgui.ImGuiTableFlags_BordersV |
+                    imgui.ImGuiTableFlags_Resizable |
+                    imgui.ImGuiTableFlags_Hideable;
+
+                const outer_size = imgui.ImVec2{ .x = 0, .y = 0 }; // text_base_height * 100
+
+                const min_row_height = text_base_height * 2;
+
+                if (imgui.igBeginTable(
+                    "VDPRegisters",
+                    3,
+                    table_flags,
+                    outer_size,
+                    0.0,
+                )) {
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "CTRL1");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.vdp.registers[0]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
+                    }
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "CTRL2");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.vdp.registers[1]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
                     }
                     imgui.igEndTable();
                 }

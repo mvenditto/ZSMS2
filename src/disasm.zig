@@ -138,7 +138,7 @@ pub const Operand = union(OperandValueType) {
 };
 
 pub const DecodedOpCode = struct {
-    offset: u16 = 0x0,
+    offset: u32 = 0x0,
     prefix: u16 = 0x0,
     opcode: u8 = 0x0,
     seq_len: u8 = 0x0,
