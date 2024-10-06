@@ -340,6 +340,9 @@ pub const SMS2 = struct {
                 }
             },
             inline 0xc0...0xff => {
+                if (self.ports[0x3e] & 0x4 != 0x0) { // I/O disable == true
+                    return 0xff;
+                }
                 if (port & 1 == 0) {
                     value = self.ports[0xdc]; // I/O port A/B
                 } else {
@@ -373,7 +376,15 @@ pub const SMS2 = struct {
                     self.vdp.ctrlWrite(value);
                 }
             },
-            else => self.ports[port] = value,
+            // inline 0xc0...0xff => {
+            //     if (port & 1 == 0) {
+            //         self.ports[0xdc] = value; // I/O port A/B
+            //     } else {
+            //         self.ports[0xdd] = value; // I/O port B/misc
+            //     }
+            // },
+            // else => self.ports[port] = value,
+            else => {},
         }
     }
 };
@@ -440,8 +451,10 @@ pub fn main() !void {
         offset += decoded.seq_len;
     }
 
-    SMS2.ioWrite(sio, 0xdc, 0xff);
-    SMS2.ioWrite(sio, 0xdd, 0xff);
+    // SMS2.ioWrite(sio, 0xdc, 0xff);
+    // SMS2.ioWrite(sio, 0xdd, 0xff);
+    sio.ports[0xdc] = 0xff;
+    sio.ports[0xdd] = 0xff;
     SMS2.write(sio, 0xfffc, 0);
     SMS2.write(sio, 0xfffd, 0);
     SMS2.write(sio, 0xfffe, 1);
@@ -533,7 +546,7 @@ pub fn main() !void {
     const im_yellow = (@as(u32, 255)) | (@as(u32, 255) << 8) | (@as(u32, 0) << 16) | (@as(u32, 255) << 24);
     const im_yellow_vec4: imgui.ImVec4 = .{ .x = 1.0, .y = 1.0, .z = 0.0, .w = 1.0 }; // w = A
 
-    var elapsed: u32 = 0;
+    // var elapsed: u32 = 0;
 
     const text_base_height = imgui.igGetTextLineHeightWithSpacing();
     const table_fmt_buf: [:0]u8 = @ptrCast(try allocator.alloc(u8, 32));
@@ -541,10 +554,23 @@ pub fn main() !void {
 
     var sprite_palette: bool = false;
 
+    var ticks_a = c.SDL_GetTicks();
+    var ticks_b = c.SDL_GetTicks();
+    var delta: u32 = 0;
+    var second: u32 = 0;
+    var frames: u32 = 0;
+
     while (!quit) {
         var event: c.SDL_Event = undefined;
 
-        const ticks = c.SDL_GetTicks();
+        ticks_a = c.SDL_GetTicks();
+        delta = ticks_a - ticks_b;
+
+        second += delta;
+        if (second >= 1000) {
+            second = 0;
+            frames = 0;
+        }
 
         while (c.SDL_PollEvent(&event) != 0) {
             _ = imgui.ImGui_ImplSDL2_ProcessEvent(@ptrCast(&event));
@@ -599,7 +625,10 @@ pub fn main() !void {
             }
         }
 
-        vdp_m4.renderFrame(sio.vdp, sio.cpu);
+        if (frames <= 60) {
+            vdp_m4.renderFrame(sio.vdp, sio.cpu);
+            frames += 1;
+        }
 
         _ = c.SDL_SetRenderDrawColor(renderer, 64, 63, 64, 255);
         _ = c.SDL_RenderClear(renderer);
@@ -806,8 +835,8 @@ pub fn main() !void {
 
             { // Window: FPS counter
                 _ = imgui.igBegin("Timings", &show_window, imgui.ImGuiWindowFlags_None);
-                imgui.igText("Frame time: %d ms.", elapsed);
-                imgui.igText("FPS: %.2f", 1000.0 / @as(f32, @floatFromInt(elapsed)));
+                imgui.igText("Frame time: %d ms.", delta);
+                imgui.igText("FPS: %.2f", 1000.0 / @as(f32, @floatFromInt(delta)));
                 imgui.igEnd();
             }
 
@@ -1067,7 +1096,7 @@ pub fn main() !void {
 
                 if (imgui.igBeginTable(
                     "VDPRegisters",
-                    3,
+                    2,
                     table_flags,
                     outer_size,
                     0.0,
@@ -1094,14 +1123,71 @@ pub fn main() !void {
                 imgui.igEnd();
             }
 
+            { // I/O Ports
+                _ = imgui.igBegin("I/O Ports", &show_window, imgui.ImGuiWindowFlags_None);
+
+                const table_flags = imgui.ImGuiTableFlags_ScrollY |
+                    imgui.ImGuiTableFlags_RowBg |
+                    imgui.ImGuiTableFlags_BordersOuter |
+                    imgui.ImGuiTableFlags_BordersV |
+                    imgui.ImGuiTableFlags_Resizable |
+                    imgui.ImGuiTableFlags_Hideable;
+
+                const outer_size = imgui.ImVec2{ .x = 0, .y = 0 }; // text_base_height * 100
+
+                const min_row_height = text_base_height * 2;
+
+                if (imgui.igBeginTable(
+                    "IOPorts",
+                    2,
+                    table_flags,
+                    outer_size,
+                    0.0,
+                )) {
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "0x3e");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.ports[0x3e]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
+                    }
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "0x3f");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.ports[0x3f]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
+                    }
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "0xdc");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.ports[0xdc]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
+                    }
+                    imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, min_row_height);
+                    if (imgui.igTableNextColumn()) {
+                        imgui.igTextColored(im_yellow_vec4, "0xdd");
+                        imgui.igSameLine(0, 10);
+                        const printed = try std.fmt.bufPrint(table_fmt_buf, "0b{b:0>8}", .{sio.ports[0xdd]});
+                        table_fmt_buf[printed.len] = "\x00"[0];
+                        imgui.igText(printed.ptr);
+                    }
+                    imgui.igEndTable();
+                }
+
+                imgui.igEnd();
+            }
+
             imgui.igRender();
             imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
         }
 
         c.SDL_RenderPresent(renderer);
 
-        // c.SDL_Delay(16 - elapsed);
-
-        elapsed = c.SDL_GetTicks() - ticks;
+        ticks_b = ticks_a;
     }
 }
