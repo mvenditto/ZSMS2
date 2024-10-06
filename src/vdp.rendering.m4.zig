@@ -128,7 +128,14 @@ pub fn renderBackgroundLine(self: *VDPState) void {
         const base_pattern_addr = @as(usize, tile.pattern_idx) * 32;
 
         // The line's offset in the 8x8 pattern, each line is encoded in 4 bitplanes hence 32byte per pattern.
-        const line_offset = ((y_scroll % 8) * 4);
+
+        var v_flip: u32 = 2 * (y_scroll % 8);
+
+        if (tile.vertical_flip) {
+            v_flip = 7;
+        }
+
+        const line_offset = ((v_flip - (y_scroll % 8)) * 4);
 
         // The absolute line's address
         const pi = base_pattern_addr + line_offset;
@@ -150,6 +157,17 @@ pub fn renderBackgroundLine(self: *VDPState) void {
             const ij_color = bp_0 | (bp_1 << 1) | (bp_2 << 2) | (bp_3 << 3);
 
             const palette_color = (16 * @as(u5, tile.palette_select)) + ij_color;
+
+            const draw_over_sprite = tile.priority_flag and ij_color != 0;
+
+            self.scanline_priority_buffer[(tile_x * 8) + j] = draw_over_sprite;
+
+            // var color = self.cram[palette_color];
+            // if (draw_over_sprite) {
+            //     color.r = @intFromFloat(@as(f32, @floatFromInt(color.r)) * 0.299);
+            //     color.g = @intFromFloat(@as(f32, @floatFromInt(color.g)) * 0.587);
+            //     color.b = @intFromFloat(@as(f32, @floatFromInt(color.b)) * 0.114);
+            // }
 
             self.display_buffer[display_buffer_y + (x + (tile_x * 8) + (h_flip - j))] = @bitCast(self.cram[palette_color]);
         }
@@ -253,7 +271,7 @@ pub fn renderSpritesLine(self: *VDPState) void {
                 const bp_3 = (self.vram[pi + 3] >> j) & 1; // bitplane 3
                 const ij_color = bp_0 | (bp_1 << 1) | (bp_2 << 2) | (bp_3 << 3);
                 const x = sprite.x + ((7 - j) * 2);
-                if (x < 255 and ij_color > 0) {
+                if (x < 255 and ij_color > 0 and self.scanline_priority_buffer[x] == false) {
                     const palette_color = 16 + ij_color;
                     const color: u8 = @bitCast(self.cram[palette_color]);
                     self.display_buffer[display_buffer_y + x] = color;
@@ -276,9 +294,11 @@ pub fn renderSpritesLine(self: *VDPState) void {
                 const bp_3 = (self.vram[pi + 3] >> j) & 1; // bitplane 3
                 const ij_color = bp_0 | (bp_1 << 1) | (bp_2 << 2) | (bp_3 << 3);
                 const x = sprite.x + (7 - j);
-                if (x < 256 and ij_color > 0) {
+                if (x < 256 and ij_color > 0 and self.scanline_priority_buffer[x] == false) {
                     const palette_color = 16 + ij_color;
+
                     self.display_buffer[display_buffer_y + x] = @bitCast(self.cram[palette_color]);
+
                     if (self.sprite_collision_buffer[x] == true) {
                         self.status_flags.sprite_collision = true;
                     } else {

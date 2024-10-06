@@ -212,11 +212,11 @@ const VDPTable = enum(u8) {
 pub const BackgroundTile = packed struct(u16) {
     /// Points to one of 512 patterns store in VRAM.
     pattern_idx: u9, // 0
-    horizontal_flip: bool = false,
-    vertical_flip: bool = false,
-    palette_select: u1 = 0,
-    priority_flag: bool = false,
-    _unused: u3 = 0,
+    horizontal_flip: bool = false, // 9
+    vertical_flip: bool = false, // 10
+    palette_select: u1 = 0, // 11
+    priority_flag: bool = false, // 12
+    _unused: u3 = 0, // 13-14-15
 };
 
 /// An entry in the patterns VRAM section.
@@ -275,7 +275,7 @@ pub const VDPState = struct {
     scanline: u9 = 0,
 
     /// The scanline priority buffer.
-    scanline_priority_buffer: [256]u8,
+    scanline_priority_buffer: [256]bool,
 
     /// The scanline sprite collision buffer.
     sprite_collision_buffer: [256]bool,
@@ -506,8 +506,8 @@ pub const VDPState = struct {
 
         // Bit 5 of register 1 (ie0 here) acts like a on/off switch for the VDP's IRQ line and
         // as long as bit 7 of the status flags is set, the VDP will assert the IRQ.
-        if (r1.v_blank_on) {
-            cpu.requests.int_signal = self.status_flags.frame_interrupt_pending;
+        if (r1.v_blank_on and self.status_flags.frame_interrupt_pending) {
+            cpu.requests.int_signal = true;
         }
     }
 
