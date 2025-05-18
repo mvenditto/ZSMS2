@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
     const build_options_mod = build_options.createModule();
 
     const exe = b.addExecutable(.{
-        .name = "zig80",
+        .name = "zsms2",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&waf.step);
 
     const exe2 = b.addExecutable(.{
-        .name = "zig80",
+        .name = "zsms2",
         .root_source_file = b.path("src/test_single_steps.zig"),
         .target = target,
         .optimize = optimize,
@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     exe2.root_module.addImport("build_options", build_options_mod);
 
     const exe3 = b.addExecutable(.{
-        .name = "zig80",
+        .name = "zsms2",
         .root_source_file = b.path("src/test_z80_test_suite.zig"),
         .target = target,
         .optimize = optimize,
