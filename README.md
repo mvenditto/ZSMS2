@@ -22,3 +22,6 @@ Notes:
 ## References
 - https://www.smspower.org/Development
 - https://github.com/redcode/Z80 which was was crucial to get the z80 emulation right
+- https://www.zilog.com/docs/z80/um0080.pdf
+- https://www.smspower.org/uploads/Development/msvdp-20021112.txt
+- ..
